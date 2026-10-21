@@ -1,1 +1,1 @@
-"""Planned F2002/F2005: separate metadata/document Chroma collections. Not implemented."""
+"""F2002 metadata indexing. F2005 document collection remains unimplemented."""

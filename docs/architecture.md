@@ -14,12 +14,15 @@ dart_insight/                    # 현재 연결된 저장소
 │   ├── config.py               # 비밀값 비노출 설정·검증
 │   ├── cli.py                  # 읽기 전용 연결 확인
 │   ├── collect.py              # F2001 세 기업 일괄 수집 CLI
+│   ├── index_metadata.py       # F2002 dry-run/명시적 임베딩 CLI
+│   ├── search_metadata.py      # 동일 BGE-M3로 메타데이터 검색 (전체 RAG 아님)
 │   ├── data/
 │   │   ├── models.py           # 기업/공시·1건 색인 텍스트
 │   │   ├── collection.py       # F2001 기간 확대·중복 제거·실행별 결과 저장
 │   │   └── cache.py            # 원자적 JSON 캐시
 │   ├── opendart/client.py      # 기업코드·공시 목록
-│   ├── vectorstore/            # 후속: 컬렉션·청킹·색인
+│   ├── vectorstore/metadata.py # F2002 단일 컬렉션·입력 검증·upsert
+│   ├── vectorstore/embeddings.py # 지연 로딩 BGE-M3, 문서/검색어 공용 어댑터
 │   ├── rag/prompts/            # 후속: 3개 프롬프트·그래프
 │   ├── services/               # 후속: 요약·조건 탐색
 │   └── ui/                     # 후속: 선택·대화·근거 UI
@@ -38,7 +41,7 @@ dart_insight/                    # 현재 연결된 저장소
 5. F2001 수집기는 한 구간의 모든 기업·유형·페이지를 마친 뒤 고유 100건과 기업별 1건 이상을 검사한다.
    부족하면 이전 1년 구간을 경계 중복 없이 추가하며 하한까지 모자라면 미완료 처리한다.
    원본 API 응답은 기존 캐시에, 정규화 메타데이터·색인 텍스트·기간·집계는 실행별 JSON에 저장한다.
-   사용자 키는 저장하지 않는다. 실제 100건 확보 증빙은 아직 없다.
+   사용자 키는 저장하지 않는다. 사용자 로컬에서 1,065건 확보를 보고받았으나 Codex에 실제 파일은 없다.
 
 현재 캐시: `.local/data/cache/corporations/<hash>.json`, `disclosures/<hash>.json`.
 키는 비밀값을 제외한 정규화 요청 매개변수 SHA-256이며 본문에는 응답과 수집시각을 저장한다.
@@ -54,7 +57,7 @@ dart_insight/                    # 현재 연결된 저장소
 ├── metadata/run-*/collection.json # 현재: 실행별 정규화 목록·index_text·요약·조회 구간
 ├── documents/<rcept_no>/      # 후속: 원본 ZIP/XML, 텍스트, 출처 manifest
 ├── collection.sqlite3         # 후속: 항목/검색어/문서 수집·색인 완료 원장
-└── chroma/                    # 후속: PersistentClient, 두 컬렉션
+└── chroma/                    # 현재: PersistentClient의 dart_metadata. 원문 컬렉션은 후속
 ```
 
 메타데이터 필드: `corp_code`, `corp_name`, `stock_code`, `report_nm`, `rcept_no`,
@@ -66,7 +69,7 @@ F2001 저장 결과는 JSON으로 다시 로드할 수 있으며 `disclosures` �
 후속 원문은 API `document.xml` 응답 ZIP/XML에서 표 구조·문단·인코딩을 고려해 추출한다.
 본문 자체가 프롬프트 명령으로 해석되지 않게 데이터 경계와 시스템 프롬프트를 분리한다.
 
-## 두 컬렉션과 ID (설계, 미구현)
+## 두 컬렉션과 ID (메타데이터만 구현)
 
 | 컬렉션 | 단위·ID | 주요 메타데이터 |
 |---|---|---|
@@ -78,6 +81,18 @@ F2001 저장 결과는 JSON으로 다시 로드할 수 있으며 `disclosures` �
 이전 청크를 정리한 뒤 교체해야 오래된 청크가 남지 않는다.
 원장은 항목+정규화 검색어+출처로 완료 상태를 관리하고 문서 다운로드·색인이 성공한 후에만 완료 처리한다.
 다운로드 캐시는 문서별로 공유하되 항목별 색인 참조는 별개다. 강제 갱신은 명시적 사용자 동작으로 둔다.
+
+F2002 `load_metadata()`는 F2001 파일을 검증하고 `index_metadata()`는 주입한 임베딩으로
+`dart_metadata`에 upsert한다. 기본 임베딩 함수는 비활성화한다. 같은 ID·텍스트·메타데이터는
+건너뛰고 변경 문서만 갱신한다. 컬렉션 모델명을 검사하여 다른 모델 혼입을 차단한다.
+저장 후 입력 전체 ID/내용을 읽어 확인하고 전체·corp_code별 건수를 출력한다.
+dry-run은 DB·API를 사용하지 않는다. 기존 자료를 삭제하지 않는 병합 방식이다. 상세 `f2002.md` 참조.
+
+GMS의 embeddings 403 보고에 따라 실제 임베딩 경로는 로컬 sentence-transformers BAAI/bge-m3로 전환했다.
+dense 1024차원·normalize_embeddings=True를 문서/검색어 모두에 적용하고 컬렉션에 벡터 프로필을 저장한다.
+모델은 첫 실제 encode 때 로드하며 dry-run·테스트에서는 다운로드하지 않는다. 검색은 같은 팩토리를 사용한다.
+기존 OpenAI 모델명·다른 프로필·다른 벡터 차원은 중단하고 새 DB 경로의 dart_metadata에 같은 JSON을 재색인한다.
+메타데이터 단독 검색 기반이 추가되었지만 F2006의 두 컬렉션 검색·병합·근거 파이프라인은 미구현이다.
 
 청킹 기본값 1000자/중복 200자는 설명·표 맥락과 토큰 비용 사이의 초기 절충이다.
 설정 변경 결과는 청크 수·근거 품질로 검증하며 지금 값이 최적이라고 단정하지 않는다.

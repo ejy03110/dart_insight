@@ -1,5 +1,40 @@
 # 초기 단계 검증 결과
 
+## F2002 로컬 BGE-M3 전환 검증 (2026-10-21 KST)
+
+- 사용자 GMS embeddings 403 보고에 따라 실제 임베딩 경로를 sentence-transformers BAAI/bge-m3로 변경했다.
+  문서·검색어 dense 1024차원·정규화·동일 팩토리, 키 불필요. GMS LLM 연결은 후속 단계다.
+- 기존 --input/--db-dir/--batch-size/--dry-run 유지. F2001 코드·JSON 데이터는 변경하지 않았다.
+- CPU 의존성 설치·pip check·오프라인 SentenceTransformer import 통과. 모델을 생성하거나 다운로드하지 않았다.
+- 전체 **58개 테스트 통과, 실패/skip 0**. HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1에서 실행했다.
+  기존 48개를 로컬 방식에 맞게 갱신하고 10개를 추가했다. 실제 외부 API·모델 다운로드는 없었다.
+- 지연 로딩·문서/질의 동일 인코더·정규화·1024차원·기업 필터 검색·재실행 생략·기존 OpenAI 벡터 보존·
+  모델/프로필/차원 불일치 차단·검색 CLI를 Mock으로 검증했다.
+- 실제 1,065건 파일은 Codex에 없으며 실제 BGE-M3 추론·소요 자원·검색 품질은 **미검증**이다.
+  기존 DB는 삭제하지 않고 새 경로에 같은 JSON을 재색인하도록 안내한다. 상세 `f2002.md` 참조.
+
+아래 OpenAI 기반 F2002 기록은 전환 이전의 역사적 결과이며 현재 실행 방식은 위 기록을 따른다.
+
+## F2002 후속 구현 검증 (2026-10-21 KST)
+
+- 관련 기준: 원본 PDF p.11~12의 F2002. F2001 수집 코드는 변경하지 않았다.
+- F2001 실제 결과는 사용자 로컬에서 1,065건(삼성전자 827 / 현대자동차 172 / 금양 66),
+  `summary.status=complete`로 보고받았다. 해당 파일은 Codex에 없어 직접 재검증하지 않았다.
+- 신규: `vectorstore/metadata.py`, `index_metadata.py`, `tests/test_metadata_indexing.py`, `docs/f2002.md`.
+  `vectorstore/__init__.py` 설명과 README·분석·설계·검증 문서를 갱신했다.
+- F2002 테스트 **13개 통과**, 전체 회귀 테스트 **48개 통과**(실패/skip 0).
+  실제 임시 Persistent Chroma와 Mock 임베딩을 사용하여 100건 색인·같은 명령 재실행 시 수 불변,
+  재실행 임베딩 0건, corp_code 필터(34/33/33), 텍스트 변경 시 같은 ID 갱신,
+  모델 불일치 차단, 잘못된 벡터 거절, 부분 실패 후 재개, 기존 레코드 보존을 확인했다.
+- 입력 검사는 필수 필드·ID·중복·날짜·키 없는 URL·색인 텍스트·전체/기업별 건수 불일치를 확인한다.
+- CLI dry-run을 `/tmp`의 합성 F2001 100건 파일로 별도 실행해 문서 수·모델·기업별 집계 출력을 확인했다.
+  테스트에서도 dry-run의 임베딩 팩토리/DB 미호출, 키 없는 실행 차단, 호출 전 문서 수·모델 출력을 검증했다.
+  CLI `--help`, `git diff --check` 통과.
+- **실제 OpenAI API 호출은 수행하지 않았다.** 사용자 1,065건의 실제 임베딩·검색 품질·실제 비용·
+  실제 API로 두 번 실행한 결과는 미검증이다. 실행/비용/재색인 증빙 절차는 `f2002.md` 참조.
+
+아래 F2001/초기 기록은 각 작업 당시의 결과다. 현재 F2002·전체 테스트 수는 위 기록을 우선한다.
+
 ## F2001 후속 구현 검증 (2026-10-21 KST)
 
 - 추가 파일: `dart_insight/data/collection.py`, `dart_insight/collect.py`, `tests/test_collection.py`, `docs/f2001.md`.
