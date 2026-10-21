@@ -13,8 +13,10 @@ dart_insight/                    # 현재 연결된 저장소
 ├── dart_insight/
 │   ├── config.py               # 비밀값 비노출 설정·검증
 │   ├── cli.py                  # 읽기 전용 연결 확인
+│   ├── collect.py              # F2001 세 기업 일괄 수집 CLI
 │   ├── data/
 │   │   ├── models.py           # 기업/공시·1건 색인 텍스트
+│   │   ├── collection.py       # F2001 기간 확대·중복 제거·실행별 결과 저장
 │   │   └── cache.py            # 원자적 JSON 캐시
 │   ├── opendart/client.py      # 기업코드·공시 목록
 │   ├── vectorstore/            # 후속: 컬렉션·청킹·색인
@@ -29,12 +31,14 @@ dart_insight/                    # 현재 연결된 저장소
 
 1. `corpCode.xml` ZIP을 메모리에서 열고 XML을 안전하게 파싱한다. 종목코드로 세 기업을 식별한다.
 2. `list.json`을 기업·기간·공시유형(A~J)별로 호출하고 `total_page`까지 순회한다.
-   현재 CLI/화면은 연결 확인용 1페이지 제한이다. 클라이언트 `max_pages=None`은 전체 조회용이다.
+   기존 연결 확인 CLI/화면은 1페이지 제한이다. F2001 `collect` CLI는 `max_pages=None`으로 전체 조회한다.
 3. 목록 API는 항목별 `pblntf_ty`를 반환하지 않으므로 유형을 제목에서 추정하지 않는다.
    유형별 조회 매개변수를 정규화된 `disclosure_type`으로 기록한다. 공시 분류는 정기공시 등 상위 분류다.
 4. `rcept_no`로 중복 제거, 항목당 색인 텍스트 1개 구성. 정정공시는 고유 접수번호를 유지하며 임의로 합치지 않는다.
-5. 후속 작업에서 100건 확보 여부를 검사하고 부족하면 오류/미완료 처리한다.
-   원본 응답·수집시각을 보존하고 사용자 키는 저장하지 않는다.
+5. F2001 수집기는 한 구간의 모든 기업·유형·페이지를 마친 뒤 고유 100건과 기업별 1건 이상을 검사한다.
+   부족하면 이전 1년 구간을 경계 중복 없이 추가하며 하한까지 모자라면 미완료 처리한다.
+   원본 API 응답은 기존 캐시에, 정규화 메타데이터·색인 텍스트·기간·집계는 실행별 JSON에 저장한다.
+   사용자 키는 저장하지 않는다. 실제 100건 확보 증빙은 아직 없다.
 
 현재 캐시: `.local/data/cache/corporations/<hash>.json`, `disclosures/<hash>.json`.
 키는 비밀값을 제외한 정규화 요청 매개변수 SHA-256이며 본문에는 응답과 수집시각을 저장한다.
@@ -42,12 +46,12 @@ dart_insight/                    # 현재 연결된 저장소
 013(조회 없음)은 정상 빈 결과로 캐시한다. TTL 만료·refresh 시 새 호출을 한다.
 이 TTL 캐시는 F2004/NF2002의 “이미 수집·색인한 검색어는 재수집하지 않음”을 완성하지 않는다.
 
-## 후속 저장 구조
+## 저장 구조
 
 ```text
 .local/data/                   # Git 제외; 키는 이곳에도 저장하지 않음
 ├── cache/                     # 현재 구현: 기업코드·목록
-├── metadata/disclosures.jsonl # 후속: 접수번호 기준 정규화 목록
+├── metadata/run-*/collection.json # 현재: 실행별 정규화 목록·index_text·요약·조회 구간
 ├── documents/<rcept_no>/      # 후속: 원본 ZIP/XML, 텍스트, 출처 manifest
 ├── collection.sqlite3         # 후속: 항목/검색어/문서 수집·색인 완료 원장
 └── chroma/                    # 후속: PersistentClient, 두 컬렉션
@@ -57,6 +61,8 @@ dart_insight/                    # 현재 연결된 저장소
 `rcept_dt`(ISO 날짜), `disclosure_type`, `source_url`, `collected_at`, `source_type`.
 원문 다운로드 URL에는 키가 필요하지만 저장·화면용 출처 URL은
 `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=<접수번호>`만 사용한다.
+F2001 저장 결과는 JSON으로 다시 로드할 수 있으며 `disclosures` 배열에 고유 접수번호별 항목이 있다.
+같은 공시가 여러 유형 조회에 나타나면 유형을 합쳐 보존하고 건수는 한 건으로 계산한다.
 후속 원문은 API `document.xml` 응답 ZIP/XML에서 표 구조·문단·인코딩을 고려해 추출한다.
 본문 자체가 프롬프트 명령으로 해석되지 않게 데이터 경계와 시스템 프롬프트를 분리한다.
 

@@ -1,7 +1,8 @@
 # DART Insight
 
 삼성전자·현대자동차·금양의 개별 공시를 분석하는 Python RAG 서비스 프로젝트입니다.
-현재는 **요구사항 분석·초기 구조·OpenDART 연결 코드까지만 구현**했습니다.
+현재는 **초기 구조·OpenDART 연결·F2001 메타데이터 일괄 수집 코드를 구현**했습니다.
+세 기업의 실제 고유 공시 100건 확보는 사용자의 로컬 API 실행 결과로 추가 확인해야 합니다.
 임베딩/Chroma 색인, 원문 수집·청킹, LangGraph, 채팅·요약·조건 탐색은 후속 단계입니다.
 F2001~F2012는 모두 최종 필수이며 현재 전체 충족을 선언하지 않습니다.
 
@@ -9,6 +10,7 @@ F2001~F2012는 모두 최종 필수이며 현재 전체 충족을 선언하지 �
 - [폴더 구조·데이터·두 컬렉션·RAG 설계](docs/architecture.md)
 - [출처·이용 조건](docs/sources.md)
 - [실행 검증 결과와 미확인 항목](docs/validation.md)
+- [F2001 수집 명령·저장 형식·실제 검증 방법](docs/f2001.md)
 
 ## 실행
 
@@ -33,6 +35,9 @@ python -m dart_insight.cli --company 삼성전자 --begin 2025-01-01 --end 2025-
 python -m dart_insight.cli --company 현대자동차 --begin 2025-01-01 --end 2025-12-31 --type A --refresh
 python -m dart_insight.cli --company 금양 --begin 2025-01-01 --end 2025-12-31 --type A --refresh
 
+# F2001: 세 기업, A~J 전체 유형·전체 페이지, 부족하면 과거로 기간 확대
+python -m dart_insight.collect --begin 2025-01-01 --end 2025-12-31 --refresh
+
 # 초기 연결 확인 화면
 streamlit run app.py
 
@@ -40,10 +45,17 @@ streamlit run app.py
 python -m unittest discover -s tests -v
 ```
 
-CLI는 기본 1페이지(최대 100건)만 확인합니다. `--max-pages N`으로 제한을 바꿀 수 있으며
+기존 `dart_insight.cli`는 기본 1페이지(최대 100건)만 확인합니다. `--max-pages N`으로 제한을 바꿀 수 있으며
 이 명령은 “100건 확보·색인 완료”를 의미하지 않습니다. 빈 결과(status 013)와 오류를 구분합니다.
 네트워크/인증 오류가 발생하면 실패 종료하며 가상 공시로 대체하지 않습니다.
 기업코드·목록 성공 응답은 `.local/data/cache/`에 저장됩니다. `--refresh`는 캐시를 무시합니다.
+
+새 `dart_insight.collect`는 모든 페이지를 조회합니다. 고유 100건 이상이고 세 기업 모두 자료가
+있을 때만 종료 코드 0·`status=complete`를 반환합니다. 부족하면 이전 1년 구간씩 추가하며
+기본 하한은 2000-01-01입니다. `--types A`로 정기공시만 수집하거나 `--earliest`로 하한을 바꿀 수 있습니다.
+최종 건수·조회 기간·예시 텍스트와 저장 위치를 JSON으로 출력합니다.
+실행별 결과는 `.local/data/metadata/run-*/collection.json`에 별도로 저장되어 이전 결과를 덮어쓰지 않습니다.
+하한까지 수집해도 부족하면 `insufficient_data`를 저장하고 종료 코드 2, API/설정/저장 오류는 1입니다.
 
 필요 네트워크: 설치 시 `pypi.org`, `files.pythonhosted.org`, 수집 시 `opendart.fss.or.kr`,
 사용자용 원문 링크 `dart.fss.or.kr`. 후속 OpenAI 호출은 `api.openai.com` 허용이 필요합니다.
@@ -57,6 +69,7 @@ CLI는 기본 1페이지(최대 100건)만 확인합니다. `--max-pages N`으�
 | `dart_insight/data/models.py` | F2001 기반 기업/공시 모델·색인 텍스트 |
 | `dart_insight/data/cache.py` | F2001 수집 기반, NF2002의 API 응답 캐시 부분 |
 | `dart_insight/opendart/client.py` | F2001 기반 공식 기업코드·유형별 공시 목록·페이지 순회, NF2006 |
+| `dart_insight/data/collection.py`, `dart_insight/collect.py` | F2001 전체 페이지 수집·기간 확대·접수번호 중복 제거·색인 텍스트·실행별 저장·건수 보고 |
 | `dart_insight/cli.py`, `app.py` | 연결 검증 진입점, F2012의 초기 진행·오류·금융 면책 안내 |
 | `vectorstore`, `rag/prompts`, `services`, `ui`의 `__init__.py` | F2002~F2012 후속 모듈의 경계만 표시, 기능 미구현 |
 | `tests/test_*.py` | 초기 연결·설정·캐시 로직 테스트. 실제 공시 수집이나 전체 요구사항 검증 아님 |
