@@ -1,5 +1,13 @@
 # DART Insight 진행 현황
 
+## F2004 SQLite 종료 경로 보완 (2026-10-21)
+
+- 원장과 트리거 테스트에서 커서를 명시적으로 닫은 뒤 트랜잭션 종료·연결 종료를 수행한다.
+  초기 설정도 try/finally 안에서 수행하여 예외 경로에서 연결이 남지 않도록 했다.
+- traceback·커서·연결 참조가 남아 있어도 종료되고 임시 DB가 즉시 삭제되는 회귀 테스트 추가.
+  오류 무시·GC 강제 호출 없이 전체 80개 통과(실패/skip 0, Linux/Python 3.12).
+  Windows 11/Python 3.11/pytest 직접 재검증은 미수행. DB 스키마·공개 기능 변경 없음.
+
 ## F2004 첫 단계 (2026-10-21)
 
 - `data/documents.py`: DocumentCandidate/CollectedDocument, 선택 공시·원문 접수번호·출처·본문·수집 시각 보존 및 검증.

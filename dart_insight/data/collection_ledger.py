@@ -5,7 +5,7 @@ index leaves collected. Only explicit successful transitions persist progress.
 This is a completion ledger, not a lock/lease for concurrent collection workers.
 """
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -40,8 +40,8 @@ class CollectionLedger:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
-            connection.execute("""CREATE TABLE IF NOT EXISTS collection_queries (
+        with self._connect() as cursor:
+            cursor.execute("""CREATE TABLE IF NOT EXISTS collection_queries (
                 item_rcept_no TEXT NOT NULL, query TEXT NOT NULL, source TEXT NOT NULL,
                 state TEXT NOT NULL CHECK(state IN ('pending', 'collected', 'indexed')),
                 documents TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL,
@@ -51,10 +51,13 @@ class CollectionLedger:
     @contextmanager
     def _connect(self):
         connection = sqlite3.connect(self.path, timeout=20)
-        connection.row_factory = sqlite3.Row
         try:
+            connection.row_factory = sqlite3.Row
+            # Close statements before transaction exit/connection.close(), including
+            # when a retained exception traceback still references this frame.
             with connection:
-                yield connection
+                with closing(connection.cursor()) as cursor:
+                    yield cursor
         finally:
             connection.close()
 
@@ -67,8 +70,8 @@ class CollectionLedger:
 
     def get(self, item_rcept_no: str, query: str, source: str = "opendart_document") -> CollectionRecord | None:
         key = self._key(item_rcept_no, query, source)
-        with self._connect() as connection:
-            row = connection.execute("SELECT * FROM collection_queries WHERE item_rcept_no=? AND query=? AND source=?", key).fetchone()
+        with self._connect() as cursor:
+            row = cursor.execute("SELECT * FROM collection_queries WHERE item_rcept_no=? AND query=? AND source=?", key).fetchone()
         if row is None:
             return None
         return CollectionRecord(row["item_rcept_no"], row["query"], row["source"], row["state"],
@@ -78,8 +81,8 @@ class CollectionLedger:
     def ensure_pending(self, item_rcept_no: str, query: str, source: str = "opendart_document"):
         """Register a new retryable query; never downgrade an existing record."""
         key = self._key(item_rcept_no, query, source)
-        with self._connect() as connection:
-            connection.execute("""INSERT INTO collection_queries
+        with self._connect() as cursor:
+            cursor.execute("""INSERT INTO collection_queries
                 (item_rcept_no, query, source, state, updated_at) VALUES (?, ?, ?, 'pending', ?)
                 ON CONFLICT(item_rcept_no, query, source) DO NOTHING""", (*key, self._now()))
 
@@ -98,23 +101,23 @@ class CollectionLedger:
             raise ValueError("중복 원문 접수번호가 있습니다.")
         payload = json.dumps([doc.to_dict() for doc in sorted(documents, key=lambda doc: doc.document_rcept_no)],
                              ensure_ascii=False, sort_keys=True)
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute("SELECT state, documents FROM collection_queries WHERE item_rcept_no=? AND query=? AND source=?", key).fetchone()
+        with self._connect() as cursor:
+            cursor.execute("BEGIN IMMEDIATE")
+            row = cursor.execute("SELECT state, documents FROM collection_queries WHERE item_rcept_no=? AND query=? AND source=?", key).fetchone()
             if row is None:
                 raise ValueError("먼저 검색어를 pending으로 등록하세요.")
             if row["state"] != "pending":
                 if row["documents"] == payload:
                     return  # Idempotent; retain indexed status if already indexed.
                 raise ValueError("완료된 수집 문서를 임의로 덮어쓸 수 없습니다.")
-            connection.execute("""UPDATE collection_queries SET state='collected', documents=?, updated_at=?
+            cursor.execute("""UPDATE collection_queries SET state='collected', documents=?, updated_at=?
                 WHERE item_rcept_no=? AND query=? AND source=?""", (payload, self._now(), *key))
 
     def mark_indexed(self, item_rcept_no: str, query: str, source: str = "opendart_document"):
         """F2005 must call only after successful indexing; no indexing occurs here."""
         key = self._key(item_rcept_no, query, source)
-        with self._connect() as connection:
-            result = connection.execute("""UPDATE collection_queries SET state='indexed', updated_at=?
+        with self._connect() as cursor:
+            result = cursor.execute("""UPDATE collection_queries SET state='indexed', updated_at=?
                 WHERE item_rcept_no=? AND query=? AND source=? AND state IN ('collected', 'indexed')""",
                 (self._now(), *key))
             if result.rowcount != 1:

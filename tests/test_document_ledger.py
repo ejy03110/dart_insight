@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from dart_insight.data.documents import DocumentCandidate, CollectedDocument
 from dart_insight.data.collection_ledger import CollectionLedger, normalize_query
@@ -128,18 +129,58 @@ class LedgerTests(unittest.TestCase):
     def test_database_write_failure_rolls_back_and_can_retry(self):
         self.ledger.ensure_pending(ITEM, "위험")
         # Connection.__exit__ commits/rolls back but does not close the handle.
-        with closing(sqlite3.connect(self.path)) as connection, connection:
-            connection.execute("""CREATE TRIGGER fail_write BEFORE UPDATE ON collection_queries
+        with closing(sqlite3.connect(self.path)) as connection, connection, closing(connection.cursor()) as cursor:
+            cursor.execute("""CREATE TRIGGER fail_write BEFORE UPDATE ON collection_queries
                 BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END""")
         with self.assertRaises(sqlite3.DatabaseError):
             self.ledger.mark_collected(ITEM, "위험", [document()])
         row = CollectionLedger(self.path).get(ITEM, "위험")
         self.assertEqual(row.state, "pending")
         self.assertEqual(row.documents, ())
-        with closing(sqlite3.connect(self.path)) as connection, connection:
-            connection.execute("DROP TRIGGER fail_write")
+        with closing(sqlite3.connect(self.path)) as connection, connection, closing(connection.cursor()) as cursor:
+            cursor.execute("DROP TRIGGER fail_write")
         self.ledger.mark_collected(ITEM, "위험", [document()])
         self.assertEqual(self.ledger.get(ITEM, "위험").state, "collected")
+        # Deletion must succeed immediately, before temporary-directory cleanup.
+        self.path.unlink()
+
+    def test_retained_traceback_does_not_keep_database_handles_open(self):
+        connections, cursors = [], []
+        connect = sqlite3.connect
+
+        class TrackingConnection(sqlite3.Connection):
+            def cursor(self, *args, **kwargs):
+                cursor = super().cursor(*args, **kwargs)
+                cursors.append(cursor)
+                return cursor
+
+        def tracked_connect(*args, **kwargs):
+            connection = connect(*args, **kwargs, factory=TrackingConnection)
+            connections.append(connection)
+            return connection
+
+        with patch("dart_insight.data.collection_ledger.sqlite3.connect", side_effect=tracked_connect):
+            self.ledger.ensure_pending(ITEM, "위험")
+            self.ledger.get(ITEM, "위험")
+            try:
+                with self.ledger._connect() as cursor:
+                    cursor.execute("BEGIN IMMEDIATE")
+                    cursor.execute("INSERT INTO missing_table VALUES (1)")
+            except sqlite3.DatabaseError as error:
+                retained_traceback = error.__traceback__
+            else:
+                self.fail("Expected database failure")
+
+        # Keep connections, cursors and traceback alive: no gc.collect() workaround.
+        self.assertIsNotNone(retained_traceback)
+        self.assertTrue(cursors)
+        for cursor in cursors:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                cursor.execute("SELECT 1")
+        for connection in connections:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                connection.execute("SELECT 1")
+        self.path.unlink()
 
     def test_invalid_keys_rejected(self):
         for query in ("", "  ", None):
