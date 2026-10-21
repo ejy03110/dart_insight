@@ -1,5 +1,15 @@
 # DART Insight 진행 현황
 
+## F2004-2 후보 검색 (2026-10-21)
+
+- `services/candidate_search.py`: 기존 dart_metadata/query_metadata 재사용, 다중 검색어별 top_k,
+  접수번호 중복 제거, 회사명·출처·검색어별 거리/유사도 추적, 선택 공시 강제 포함.
+- 기존 DocumentCandidate를 감싼 CandidateHit로 검색 근거를 제공하며 기존 모델 필드를 변경하지 않는다.
+  빈 검색 결과와 예외를 구분한다. 원장 갱신·외부 API·LLM 선정·원문 다운로드·색인 구현 없음.
+- `tests/test_candidate_search.py`: Mock 및 임시 실제 Chroma/1024차원 모의 벡터로 신규 10개,
+  전체 90개 통과(실패/skip 0). 실제 사용자 DB·실제 모델 검색 품질은 미검증.
+- 사용법·결과 계약: [f2004.md](f2004.md). F2004 전체 완료를 의미하지 않는다.
+
 ## F2004 SQLite 종료 경로 보완 (2026-10-21)
 
 - 원장과 트리거 테스트에서 커서를 명시적으로 닫은 뒤 트랜잭션 종료·연결 종료를 수행한다.

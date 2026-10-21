@@ -1,1 +1,1 @@
-"""Planned F2010/F2011: evidence-based summary and natural-language discovery. Not implemented."""
+"""F2004 candidate search; F2010/F2011 summary/discovery remain planned."""
