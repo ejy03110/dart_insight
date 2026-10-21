@@ -1,5 +1,14 @@
 # DART Insight 진행 현황
 
+## F2004 첫 단계 (2026-10-21)
+
+- `data/documents.py`: DocumentCandidate/CollectedDocument, 선택 공시·원문 접수번호·출처·본문·수집 시각 보존 및 검증.
+- `data/collection_ledger.py`: 선택 공시+정규화 검색어+출처 기준 SQLite 영속 원장.
+  pending/collected/indexed 분리, 성공 단계만 갱신, 수집·색인 실패 후 재시도, 트랜잭션 저장.
+- F2004 모델/원장 테스트 12개 포함 전체 79개 통과, 실패/skip 0.
+  외부 API·LLM 선별·실제 색인 미구현. F2001~F2003·Chroma 코드 변경 없음.
+- 상세 계약과 사용법: [f2004.md](f2004.md). 아래 F2004 미구현 표에서 모델·원장 부분만 이 결과로 대체한다.
+
 ## F2003 추가 결과 (2026-10-21)
 
 - `rag/prompts/query_extraction.py`: 공시 분석 전문가 역할, 선택 메타데이터+질문 입력, JSON 출력 지시.
