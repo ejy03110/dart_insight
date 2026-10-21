@@ -1,1 +1,1 @@
-"""Planned F2003/F2004/F2007: three separate prompts. Not implemented."""
+"""F2003 query extraction; F2004/F2007 prompts remain planned."""

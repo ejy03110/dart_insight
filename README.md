@@ -1,10 +1,10 @@
 # DART Insight
 
 삼성전자·현대자동차·금양의 개별 공시를 분석하는 Python RAG 서비스 프로젝트입니다.
-현재는 **초기 구조·OpenDART 연결·F2001 메타데이터 수집·F2002 로컬 BGE-M3/Chroma 색인 CLI를 구현**했습니다.
+현재는 **초기 구조·OpenDART 연결·F2001 메타데이터 수집·F2002 로컬 BGE-M3/Chroma 색인 CLI·F2003 검색어 추출 함수를 구현**했습니다.
 사용자 로컬 검증에서 F2001 1,065건(827/172/66) 수집 완료를 보고받았습니다.
 F2002는 Mock 임베딩으로 검증했으며 실제 BGE-M3 모델의 1,065건 색인은 미검증입니다.
-GMS 임베딩 403 문제에 따라 임베딩은 로컬 `BAAI/bge-m3`, 향후 LLM 호출은 SSAFY GMS로 분리합니다.
+GMS 임베딩 403 문제에 따라 임베딩은 로컬 `BAAI/bge-m3`, F2003 LLM 호출은 SSAFY GMS로 분리합니다.
 원문 수집·청킹, LangGraph, 채팅·요약·조건 탐색은 후속 단계입니다.
 F2001~F2012는 모두 최종 필수이며 현재 전체 충족을 선언하지 않습니다.
 
@@ -73,7 +73,7 @@ python -m unittest discover -s tests -v
 필요 네트워크: 설치 시 `pypi.org`, `files.pythonhosted.org`, 수집 시 `opendart.fss.or.kr`,
 사용자용 원문 링크 `dart.fss.or.kr`. 최초 모델 다운로드는 Hugging Face와 배포 CDN 접근이 필요합니다.
 모델을 완전히 캐시한 후 `HF_HUB_OFFLINE=1`로 실행하면 네트워크 없이 임베딩·검색할 수 있습니다.
-향후 GMS LLM 엔드포인트는 `https://gms.ssafy.io/gmsapi/`이며 현재 LLM 연결은 미구현입니다.
+F2003 GMS LLM 호출·사용 방법은 [F2003 실행 절차](docs/f2003.md)를 참고하세요. 실제 GMS 연결은 미검증입니다.
 클라우드 환경의 네트워크/키 초안 저장과 실제 런타임 적용·게시 여부는 별개입니다.
 
 ## 현재 구현 파일과 요구사항
@@ -87,7 +87,7 @@ python -m unittest discover -s tests -v
 | `dart_insight/data/collection.py`, `dart_insight/collect.py` | F2001 전체 페이지 수집·기간 확대·접수번호 중복 제거·색인 텍스트·실행별 저장·건수 보고 |
 | `dart_insight/vectorstore/metadata.py`, `dart_insight/index_metadata.py` | F2002 입력 검증·단일 컬렉션 upsert·기업 필터·변경 없는 문서 생략·건수 보고 |
 | `dart_insight/cli.py`, `app.py` | 연결 검증 진입점, F2012의 초기 진행·오류·금융 면책 안내 |
-| `rag/prompts`, `services`, `ui`의 `__init__.py` | F2003~F2012 후속 모듈의 경계만 표시, 기능 미구현 |
+| `dart_insight/rag/query_extraction.py`, `rag/prompts/query_extraction.py` | F2003 GMS 검색어 추출·JSON 검증·최대 2회 재시도·선택 접수번호 강제 포함. UI 미연결 |
 | `tests/test_*.py` | 초기 연결·설정·캐시 로직 테스트. 실제 공시 수집이나 전체 요구사항 검증 아님 |
 | `docs/*.md` | 전체 필수 요구사항 계획·설계·검증 상태 |
 | `requirements.txt`, `requirements.lock.txt`, `.python-version`, `.gitignore` | 지정 스택·재현 설치·로컬 데이터 제외 |
