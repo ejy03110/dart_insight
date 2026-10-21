@@ -1,9 +1,10 @@
 # DART Insight
 
 삼성전자·현대자동차·금양의 개별 공시를 분석하는 Python RAG 서비스 프로젝트입니다.
-현재는 **초기 구조·OpenDART 연결·F2001 메타데이터 수집·F2002 임베딩/Chroma 색인 CLI를 구현**했습니다.
+현재는 **초기 구조·OpenDART 연결·F2001 메타데이터 수집·F2002 로컬 BGE-M3/Chroma 색인 CLI를 구현**했습니다.
 사용자 로컬 검증에서 F2001 1,065건(827/172/66) 수집 완료를 보고받았습니다.
-F2002는 Mock 임베딩으로 검증했으며 실제 OpenAI API 색인은 미검증입니다.
+F2002는 Mock 임베딩으로 검증했으며 실제 BGE-M3 모델의 1,065건 색인은 미검증입니다.
+GMS 임베딩 403 문제에 따라 임베딩은 로컬 `BAAI/bge-m3`, 향후 LLM 호출은 SSAFY GMS로 분리합니다.
 원문 수집·청킹, LangGraph, 채팅·요약·조건 탐색은 후속 단계입니다.
 F2001~F2012는 모두 최종 필수이며 현재 전체 충족을 선언하지 않습니다.
 
@@ -28,7 +29,7 @@ cp .env.example .env
 
 `.env`의 `DART_API_KEY`에 본인의 OpenDART 키를 로컬에서 입력하세요.
 또는 프로세스 환경변수/Streamlit Secrets로 주입하세요. 키를 채팅·소스·커밋에 넣지 마세요.
-F2002 실제 임베딩과 후속 RAG에는 `OPENAI_API_KEY`가 필요합니다. F2001과 dry-run에는 불필요합니다.
+F2002 로컬 임베딩·검색·dry-run에는 API 키가 필요하지 않습니다. LLM 키는 후속 생성 단계에서만 사용합니다.
 Streamlit Secrets 예제는 `.streamlit/secrets.toml.example`입니다.
 
 ```bash
@@ -43,9 +44,12 @@ python -m dart_insight.collect --begin 2025-01-01 --end 2025-12-31 --refresh
 # F2002: 입력 검증만 수행 (실제 collection.json 경로 지정, API 키 불필요)
 python -m dart_insight.index_metadata --input .local/data/metadata/run-7kvbb30c/collection.json --dry-run
 
-# 실제 임베딩: OPENAI_API_KEY 설정 후 사용자가 명시적으로 실행
-python -m dart_insight.index_metadata --input .local/data/metadata/run-7kvbb30c/collection.json --db-dir .local/data/chroma
+# 로컬 임베딩: 첫 실행은 BGE-M3 가중치 다운로드 필요, 기존 OpenAI DB와 다른 경로 사용
+python -m dart_insight.index_metadata --input .local/data/metadata/run-7kvbb30c/collection.json --db-dir .local/data/chroma_bge_m3 --batch-size 16
 # 같은 명령을 재실행하여 after.total 불변·count_delta=0 확인
+
+# 같은 로컬 모델로 메타데이터 검색 (전체 RAG는 아직 미구현)
+python -m dart_insight.search_metadata --db-dir .local/data/chroma_bge_m3 --query "삼성전자 사업보고서" --top-k 5
 
 # 초기 연결 확인 화면
 streamlit run app.py
@@ -67,7 +71,9 @@ python -m unittest discover -s tests -v
 하한까지 수집해도 부족하면 `insufficient_data`를 저장하고 종료 코드 2, API/설정/저장 오류는 1입니다.
 
 필요 네트워크: 설치 시 `pypi.org`, `files.pythonhosted.org`, 수집 시 `opendart.fss.or.kr`,
-사용자용 원문 링크 `dart.fss.or.kr`. 후속 OpenAI 호출은 `api.openai.com` 허용이 필요합니다.
+사용자용 원문 링크 `dart.fss.or.kr`. 최초 모델 다운로드는 Hugging Face와 배포 CDN 접근이 필요합니다.
+모델을 완전히 캐시한 후 `HF_HUB_OFFLINE=1`로 실행하면 네트워크 없이 임베딩·검색할 수 있습니다.
+향후 GMS LLM 엔드포인트는 `https://gms.ssafy.io/gmsapi/`이며 현재 LLM 연결은 미구현입니다.
 클라우드 환경의 네트워크/키 초안 저장과 실제 런타임 적용·게시 여부는 별개입니다.
 
 ## 현재 구현 파일과 요구사항

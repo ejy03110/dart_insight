@@ -233,7 +233,7 @@ class MetadataCliTests(unittest.TestCase):
             self.assertIn(MODEL, stdout.getvalue())
             return provider
 
-        with patch("dart_insight.index_metadata.load_settings", return_value=replace(self.settings, openai_api_key="test")), \
+        with patch("dart_insight.index_metadata.load_settings", return_value=self.settings), \
              patch("dart_insight.index_metadata.create_embeddings", side_effect=factory), redirect_stdout(stdout):
             self.assertEqual(main(["--input", str(self.path)]), 0)
             self.assertEqual(main(["--input", str(self.path)]), 0)
@@ -241,16 +241,13 @@ class MetadataCliTests(unittest.TestCase):
         self.assertIn('"skipped_count": 100', stdout.getvalue())
         self.assertEqual(sum(map(len, provider.calls)), 100)
 
-    def test_missing_key_or_invalid_input_never_creates_embedding_client(self):
-        for invalid in (False, True):
-            if invalid:
-                self.path.write_text("{}")
-            with self.subTest(invalid=invalid), \
-                 patch("dart_insight.index_metadata.load_settings", return_value=self.settings), \
-                 patch("dart_insight.index_metadata.create_embeddings") as factory, \
-                 redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                self.assertEqual(main(["--input", str(self.path)]), 1)
-                factory.assert_not_called()
+    def test_invalid_input_never_creates_embedding_client(self):
+        self.path.write_text("{}")
+        with patch("dart_insight.index_metadata.load_settings", return_value=self.settings), \
+             patch("dart_insight.index_metadata.create_embeddings") as factory, \
+             redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            self.assertEqual(main(["--input", str(self.path)]), 1)
+            factory.assert_not_called()
         self.assertFalse((self.directory / "chroma").exists())
 
 

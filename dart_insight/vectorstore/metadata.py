@@ -1,6 +1,6 @@
 """F2002: validated F2001 input and idempotent, persistent metadata indexing.
 
-No OpenAI client is created here. Embeddings are injected by the explicit CLI
+No model is loaded here. Embeddings are injected by the explicit CLI
 or by offline tests; Chroma's default embedding function is always disabled.
 """
 
@@ -16,6 +16,7 @@ from typing import Protocol
 from urllib.parse import parse_qs, urlparse
 
 from dart_insight.data.models import COMPANIES
+from dart_insight.vectorstore.embeddings import DIMENSION, LOCAL_MODEL, PROFILE
 
 COLLECTION_NAME = "dart_metadata"
 REQUIRED_FIELDS = ("corp_code", "corp_name", "rcept_no", "report_nm", "rcept_dt",
@@ -28,6 +29,7 @@ class MetadataIndexError(ValueError):
 
 class Embeddings(Protocol):
     def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
+    def embed_query(self, text: str) -> list[float]: ...
 
 
 @dataclass(frozen=True)
@@ -116,18 +118,41 @@ def input_report(documents: list[MetadataDocument], model: str) -> dict:
                                 "count": count} for code, count in sorted(counts.items())]}
 
 
-def open_metadata_collection(directory: Path, model: str):
+def check_collection_model(collection, model: str):
+    metadata = collection.metadata or {}
+    if metadata.get("embedding_model") != model:
+        raise MetadataIndexError("기존 컬렉션의 임베딩 모델이 다릅니다. 기존 DB를 보존하고 "
+                                 "별도의 --db-dir(예: .local/data/chroma_bge_m3)에 같은 JSON을 재색인하세요.")
+    if model == LOCAL_MODEL:
+        if metadata.get("embedding_profile") != PROFILE:
+            raise MetadataIndexError("기존 BGE 컬렉션의 벡터 설정이 확인되지 않습니다. 새 --db-dir에 재색인하세요.")
+        stored = collection.get(limit=1, include=["embeddings"])
+        if len(stored["ids"]) and len(stored["embeddings"][0]) != DIMENSION:
+            raise MetadataIndexError("기존 벡터 차원이 1024가 아닙니다. 새 --db-dir에 재색인하세요.")
+
+
+def check_embedding_model(embeddings, model: str):
+    actual = getattr(embeddings, "model_name", None)
+    if (actual is not None and actual != model) or (model == LOCAL_MODEL and actual != model):
+        raise MetadataIndexError("색인/검색 임베딩 모델과 컬렉션 모델이 일치하지 않습니다.")
+
+
+def open_metadata_collection(directory: Path, model: str, *, create: bool = True):
     """No default model download or network embedding from Chroma is permitted."""
     import chromadb
     from chromadb.config import Settings as ChromaSettings
 
+    if not create and not (directory / "chroma.sqlite3").is_file():
+        raise MetadataIndexError("기존 Chroma DB가 없습니다. 먼저 메타데이터를 색인하세요.")
     client = chromadb.PersistentClient(path=str(directory), settings=ChromaSettings(anonymized_telemetry=False))
-    collection = client.get_or_create_collection(
-        COLLECTION_NAME, embedding_function=None,
-        metadata={"embedding_model": model, "schema_version": 1, "hnsw:space": "cosine"},
-    )
-    if (collection.metadata or {}).get("embedding_model") != model:
-        raise MetadataIndexError("기존 컬렉션의 임베딩 모델이 다릅니다. 별도의 --db-dir를 사용해 주세요.")
+    metadata = {"embedding_model": model, "schema_version": 1, "hnsw:space": "cosine"}
+    if model == LOCAL_MODEL:
+        metadata["embedding_profile"] = PROFILE
+    if create:
+        collection = client.get_or_create_collection(COLLECTION_NAME, embedding_function=None, metadata=metadata)
+    else:
+        collection = client.get_collection(COLLECTION_NAME, embedding_function=None)
+    check_collection_model(collection, model)
     return collection
 
 
@@ -156,8 +181,8 @@ def index_metadata(documents: list[MetadataDocument], collection, embeddings: Em
         raise MetadataIndexError("문서가 필요하며 batch-size는 1~2048이어야 합니다.")
     if len({d.id for d in documents}) != len(documents):
         raise MetadataIndexError("색인 입력 ID가 중복되었습니다.")
-    if (collection.metadata or {}).get("embedding_model") != model:
-        raise MetadataIndexError("컬렉션의 임베딩 모델이 다릅니다.")
+    check_collection_model(collection, model)
+    check_embedding_model(embeddings, model)
     codes = [d.metadata["corp_code"] for d in documents]
     before = collection_counts(collection, codes)
     changed_count, skipped_count = 0, 0
@@ -174,11 +199,12 @@ def index_metadata(documents: list[MetadataDocument], collection, embeddings: Em
         try:
             vectors = embeddings.embed_documents([d.text for d in changed])
         except Exception:
-            raise MetadataIndexError("임베딩 호출 실패: 키·모델·네트워크·한도를 확인해 주세요. "
+            raise MetadataIndexError("로컬 임베딩 실패: 모델 설치·캐시·장치·메모리를 확인해 주세요. "
                                      "일부 배치는 저장되었을 수 있으며 같은 명령으로 재시도할 수 있습니다.") from None
         if (len(vectors) != len(changed) or any(not vector or
                 any(not isinstance(value, (int, float)) or not math.isfinite(value) for value in vector)
-                for vector in vectors) or len({len(vector) for vector in vectors}) != 1):
+                for vector in vectors) or len({len(vector) for vector in vectors}) != 1
+                or (model == LOCAL_MODEL and any(len(vector) != DIMENSION for vector in vectors))):
             raise MetadataIndexError("임베딩 응답의 개수/차원/숫자 형식이 올바르지 않습니다.")
         collection.upsert(ids=[d.id for d in changed], documents=[d.text for d in changed],
                           metadatas=[{**d.metadata, "content_hash": d.content_hash} for d in changed],
@@ -198,3 +224,30 @@ def index_metadata(documents: list[MetadataDocument], collection, embeddings: Em
             "input_count": len(documents), "embedded_count": changed_count, "skipped_count": skipped_count,
             "before": before, "after": after, "count_delta": after["total"] - before["total"],
             "verified_input_count": len(documents)}
+
+
+def query_metadata(collection, query: str, embeddings: Embeddings, *, model: str,
+                   corp_code: str | None = None, top_k: int = 5) -> list[dict]:
+    """Metadata-only search foundation, not F2006's two-collection retrieval."""
+    check_collection_model(collection, model)
+    check_embedding_model(embeddings, model)
+    if not query.strip() or not 1 <= top_k <= 100:
+        raise MetadataIndexError("검색어와 1~100 범위의 top_k가 필요합니다.")
+    if corp_code is not None and not re.fullmatch(r"\d{8}", corp_code):
+        raise MetadataIndexError("corp_code는 공식 8자리 기업코드를 사용하세요.")
+    where = {"corp_code": corp_code} if corp_code else None
+    if not collection.count() or (where and not collection.get(where=where, limit=1, include=[])["ids"]):
+        return []
+    try:
+        vector = embeddings.embed_query(query)
+    except Exception:
+        raise MetadataIndexError("검색어 로컬 임베딩 실패: 모델 캐시·장치·메모리를 확인하세요.") from None
+    if (not vector or any(not isinstance(v, (float, int)) or not math.isfinite(v) for v in vector)
+            or (model == LOCAL_MODEL and len(vector) != DIMENSION)):
+        raise MetadataIndexError("검색어 벡터 차원/숫자 형식이 올바르지 않습니다.")
+    kwargs = {"where": where} if where else {}
+    result = collection.query(query_embeddings=[vector], n_results=min(top_k, collection.count()),
+                              include=["documents", "metadatas", "distances"], **kwargs)
+    return [{"id": identifier, "text": text, "metadata": metadata, "distance": distance}
+            for identifier, text, metadata, distance in zip(
+                result["ids"][0], result["documents"][0], result["metadatas"][0], result["distances"][0])]

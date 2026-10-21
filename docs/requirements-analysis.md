@@ -14,8 +14,8 @@
 메타데이터 모델/색인 텍스트 구성, API 응답 캐시, 초기 연결 화면과 F2001 일괄 수집 CLI.
 F2001 수집기는 세 기업·유형별 전체 페이지 수집, 과거 기간 확대, 고유 100건 기준 검사,
 건수·조회 기간·색인 텍스트를 포함한 로컬 저장을 구현했다. 실제 100건 확보는 미검증이다.
-F2002도 추가했다: JSON 입력 검증·dry-run·OpenAI 임베딩 주입·단일 Chroma 컬렉션 upsert·건수/중복 검증.
-F2001 실제 1,065건 수집은 사용자 로컬 결과로 보고받았다. F2002 실제 OpenAI 색인은 미검증이다.
+F2002도 추가했다: JSON 입력 검증·dry-run·로컬 BAAI/bge-m3·단일 Chroma 컬렉션 upsert·건수/중복 검증.
+F2001 실제 1,065건 수집은 사용자 로컬 결과로 보고받았다. 실제 BGE-M3 모델 색인은 미검증이다.
 원문 다운로드·답변 생성·LangGraph·채팅은 후속 단계이며 완료로 표시하지 않는다.
 빈 패키지는 책임 경계를 표시할 뿐 구현을 의미하지 않는다.
 
@@ -46,7 +46,7 @@ F2013~F2016은 심화이며 필수 기능을 대체하지 않는다. 자동 스�
 | 번호 | 최종 구현 조건·담당 위치 | 검증·완료 기준 | 이번 단계 |
 |---|---|---|---|
 | F2001 | `data`, `opendart`: 실제 공시 100건 이상 로드. 기업명·공시명·접수번호·접수일·유형·원문 URL 등을 공시당 하나의 텍스트로 구성 | 고유 접수번호 ≥100, 기업별 수·기간 기록, 한 건의 텍스트 출력으로 필드 확인 | `collect_metadata()`·`save_collection()`·`python -m dart_insight.collect` 구현, 단위·모의 HTTP 통합 테스트 통과. 실제 100건 확보는 미검증. 상세: `f2001.md` |
-| F2002 | `vectorstore`: `dart_metadata` 컬렉션에 OpenAI 임베딩, `meta:{rcept_no}` ID로 upsert, 저장 건수 표시 | 입력 ID/내용 검증, 동일 작업 두 번 후 수 불변, 전체·기업별 건수 출력 | `load_metadata()`·`index_metadata()`·CLI 구현. Mock+로컬 Chroma 검증 통과. 실제 OpenAI 색인은 미검증. 상세 `f2002.md` |
+| F2002 | `vectorstore`: `dart_metadata` 컬렉션에 로컬 BGE-M3 임베딩, `meta:{rcept_no}` ID로 upsert, 저장 건수 표시 | 입력 ID/내용 검증, 동일 작업 두 번 후 수 불변, 전체·기업별 건수 출력 | 로컬 어댑터·색인/검색·CLI 구현. Mock+로컬 Chroma 검증 통과. 실제 모델 색인 미검증. 상세 `f2002.md` |
 | F2003 | `rag/prompts/query_extraction`: 공시 분석 전문가 역할로 항목·질문에서 검색어 추출, JSON 스키마 검증. 선택 공시 접수번호를 검색 대상에 강제 추가 | 대표 질문의 검색어 JSON 출력과 선택 공시 포함 확인 | 설계만 |
 | F2004 | `opendart`, `data`, `rag/prompts/candidate_selection`: 외부 API 검색 후보를 모아 선별 프롬프트로 ID·이유 결정 후 본문·출처 수집. 선택 공시 원문은 무조건 포함. 완료한 검색어는 재수집하지 않음 | 후보/채택/제외 목록·이유, 원문 URL, 선택 공시 원문 포함, 같은 질문 재실행 시 외부 호출 0 확인 | 기업코드·목록 API 연결만. 원문/LLM 선별 미구현 |
 | F2005 | `vectorstore`: 설정 기반 청킹 후 `dart_documents`에 저장. 제목·출처·관련 공시 필수. 청크 ID에 관련 항목과 원문 ID 포함 | 두 컬렉션 분리 확인. 1000/200과 500/100 재색인 비교. 다른 항목의 동일 원문이 덮어써지지 않음 | 설정·구조만 |
@@ -91,12 +91,13 @@ Python은 명세의 3.10+를 따르되 이번 로컬 검증 버전은 3.12다.
 | 설정 | 용도·시점 |
 |---|---|
 | `DART_API_KEY` | 지금 필요한 OpenDART 키. 채팅·소스에 입력 금지 |
-| `OPENAI_API_KEY` | 후속 임베딩/생성 시 필요. 현재 연결 확인에는 불필요 |
+| `OPENAI_API_KEY` | 향후 LLM용 기존 설정. 로컬 임베딩·검색에는 불필요. GMS LLM 연결은 별도 후속 작업 |
 | `DART_DATA_DIR` | 기본 `.local/data`, 배포 시 영속성을 보장하지 않는 로컬 경로 |
 | `DART_TIMEOUT_SECONDS`, `DART_REQUEST_INTERVAL_SECONDS` | 외부 호출 제한·간격 |
 | `DART_CORP_CACHE_TTL_SECONDS`, `DART_LIST_CACHE_TTL_SECONDS` | 기업코드 24시간, 목록 15분. 새 데이터 확인은 refresh |
 | `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K` | 후속 청킹 1000/200, 외부 근거 5개 + 선택 메타데이터 1개 |
-| `OPENAI_CHAT_MODEL`, `OPENAI_EMBEDDING_MODEL` | 후속 생성·임베딩 모델. 모델 변경 시 임베딩 컬렉션 재생성 필요 |
+| `OPENAI_CHAT_MODEL` | 후속 생성 모델 |
+| `EMBEDDING_MODEL`, `EMBEDDING_DEVICE`, `EMBEDDING_CACHE_DIR` | BAAI/bge-m3, 기본 CPU, 로컬 캐시. 기존 OpenAI 벡터는 다른 DB 경로에 재색인. OPENAI_EMBEDDING_MODEL은 더 이상 사용하지 않음 |
 
 우선순위: 프로세스 환경변수 > 전달된 Streamlit Secrets > 저장소 `.env` > 기본값.
 CLI는 Secrets 파일을 직접 읽지 않으므로 CLI용 키는 환경변수나 `.env`로 설정한다.

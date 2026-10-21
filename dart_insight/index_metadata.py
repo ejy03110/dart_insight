@@ -1,4 +1,4 @@
-"""Explicit F2002 CLI. Importing this module never creates an embedding client."""
+"""Explicit F2002 local indexing CLI. dry-run never loads/downloads a model."""
 
 import argparse
 import json
@@ -12,11 +12,9 @@ from dart_insight.vectorstore.metadata import (
 
 
 def create_embeddings(settings):
-    from langchain_openai import OpenAIEmbeddings
+    from dart_insight.vectorstore.embeddings import create_embeddings as create_local_embeddings
 
-    return OpenAIEmbeddings(model=settings.embedding_model, api_key=settings.openai_api_key,
-                            chunk_size=64, max_retries=2, request_timeout=settings.timeout_seconds,
-                            check_embedding_ctx_length=False)
+    return create_local_embeddings(settings)
 
 
 def main(argv=None):
@@ -32,15 +30,14 @@ def main(argv=None):
         settings = load_settings()
         documents = load_metadata(args.input)
         report = input_report(documents, settings.embedding_model)
-        # Print and flush before creating the real OpenAI client or calling it.
+        # Print and flush before any possible model download or local encoding.
         print(json.dumps({"stage": "validated_input", "dry_run": args.dry_run, **report},
                          ensure_ascii=False, indent=2), flush=True)
         if args.dry_run:
             return 0
-        if not settings.openai_api_key:
-            raise ConfigurationError("실제 색인에는 OPENAI_API_KEY가 필요합니다. 환경변수/.env로 설정해 주세요.")
         collection = open_metadata_collection(args.db_dir or settings.data_dir / "chroma", settings.embedding_model)
         embeddings = create_embeddings(settings)
+        embeddings.batch_size = args.batch_size
         result = index_metadata(documents, collection, embeddings, model=settings.embedding_model,
                                 batch_size=args.batch_size)
         print(json.dumps({"stage": "indexed", **result}, ensure_ascii=False, indent=2))

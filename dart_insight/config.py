@@ -31,7 +31,9 @@ class Settings:
     chunk_overlap: int = 200
     top_k: int = 5
     chat_model: str = "gpt-4.1-mini"
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_device: str = "cpu"
+    embedding_cache_dir: Path | None = None
 
     def __post_init__(self):
         if not (0 < self.timeout_seconds <= 120):
@@ -65,7 +67,9 @@ def load_settings(secrets: Mapping | None = None) -> Settings:
             chunk_overlap=int(get("CHUNK_OVERLAP", 200)),
             top_k=int(get("TOP_K", 5)),
             chat_model=get("OPENAI_CHAT_MODEL", "gpt-4.1-mini"),
-            embedding_model=get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+            embedding_model=get("EMBEDDING_MODEL", "BAAI/bge-m3"),
+            embedding_device=get("EMBEDDING_DEVICE", "cpu"),
+            embedding_cache_dir=(ROOT / get("EMBEDDING_CACHE_DIR")) if get("EMBEDDING_CACHE_DIR") else None,
         )
     except ConfigurationError:
         raise

@@ -15,3 +15,9 @@ python-dotenv==1.2.3
 typing-extensions==4.16.0
 # Untrusted XML from the corporate-code ZIP.
 defusedxml==0.7.1
+# F2002 local dense embeddings; CPU wheels avoid unnecessary CUDA packages.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.9.0+cpu; sys_platform != "darwin"
+torch==2.9.0; sys_platform == "darwin"
+transformers==4.57.3
+sentence-transformers==5.1.2

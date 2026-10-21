@@ -56,7 +56,8 @@ Python 3.10+이며 현재 검증 버전은 3.12다. Streamlit, LangChain, LangGr
 OpenAI API, OpenDART API, requests를 사용한다. LangSmith 등 PDF 지정 필수 패키지는
 `requirements.txt`에 고정되어 있고, 검증 환경 전이 의존성은 `requirements.lock.txt`에 있다.
 버전을 임의로 최신화하지 않는다. 추가/변경 의존성이 필요하면 이유와 호환성을 검증한다.
-현재 F2002는 LangChain `OpenAIEmbeddings`와 Chroma `PersistentClient`를 사용한다.
+현재 F2002는 sentence-transformers의 로컬 `BAAI/bge-m3`(dense 1024차원·정규화)와 Chroma `PersistentClient`를 사용한다.
+색인과 검색은 `vectorstore/embeddings.py`의 같은 팩토리를 사용한다. GMS는 향후 LLM용이며 임베딩에 사용하지 않는다.
 
 ## F2001~F2012에서 유지할 조건
 
@@ -85,13 +86,17 @@ NF2001~NF2007의 응답 시간·수집 캐시·키 보호·내부 정보 비노�
 - 이름과 설정 여부만 확인한다. 환경 전체나 자격증명 파일을 출력하지 않는다. 키 값을 채팅으로 요청하지 않는다.
 - 설정 우선순위: 환경변수 > 전달된 Streamlit Secrets > `.env` > 기본값.
   CLI는 Streamlit Secrets 파일을 직접 읽지 않는다.
-- `DART_API_KEY`: 실제 수집용. `OPENAI_API_KEY`: 실제 임베딩/생성용. dry-run·Mock 테스트는 키 불필요.
+- `DART_API_KEY`: 실제 수집용. 로컬 임베딩·검색·dry-run·Mock 테스트는 API 키 불필요.
+  `OPENAI_API_KEY` 등 LLM 키는 향후 생성용이며 현재 임베딩에서는 읽어 전송하지 않는다.
 - 실제 OpenAI 호출은 사용자가 명시적으로 요청한 실행에 한정한다. 현재까지의 ‘실제 API 호출 금지’를
   새 승인 없이 해제하지 않는다. import·앱 시작·테스트가 자동으로 과금 호출을 하지 않게 한다.
-- 호출 전에 문서 수·모델·비용 영향 요소를 알린다. 현재 기본 임베딩 모델은 `text-embedding-3-small`이다.
+- 모델 로드 전에 문서 수·모델을 알린다. 임베딩 기본값은 `BAAI/bge-m3`, CPU 실행이다.
+  `EMBEDDING_MODEL`, `EMBEDDING_DEVICE`, `EMBEDDING_CACHE_DIR`를 사용하며 과거 `OPENAI_EMBEDDING_MODEL`은 무시한다.
+  첫 실제 실행에 Hugging Face 가중치 다운로드가 필요할 수 있다. dry-run·테스트는 다운로드하지 않는다.
 - 기존 timeout·간격·제한 재시도·TLS 검증·캐시 정책을 유지한다. 인증/한도/통신 오류를 빈 성공으로 바꾸지 않는다.
 - 오류에는 정제한 메시지만 제공한다. 키·전체 프롬프트·provider 원문 응답·traceback을 UI에 노출하지 않는다.
 - 모델 불일치 시 기존 컬렉션을 덮어쓰지 않는다. 다른 DB 경로를 사용하며 기존 자료를 보존한다.
+  컬렉션 이름 `dart_metadata`는 유지하고 BGE 모델·정규화 프로필·1024차원 검증을 색인과 검색에 적용한다.
 
 ## 테스트와 진행 기록
 
@@ -116,9 +121,9 @@ F2002는 첫 색인/재색인의 건수·변경 없는 문서 생략·기업 필
 
 - 작업 시작/종료에 현재 브랜치·`git status`를 확인하고 기존 사용자 변경을 보존한다.
 - `master`에 직접 push하거나 병합하지 않는다. 작업 브랜치를 사용하고 PR 병합은 사용자가 검토 후 수행한다.
-- commit/push는 해당 작업에 대한 사용자 요청 범위에서 수행한다. 이전 기능의 push 요청을 이후 모든 작업의 상시 승인으로 확대하지 않는다.
+- 사용자는 작업 완료 때마다 작업 브랜치에 commit/push하도록 상시 요청했다. 이후 별도 확인 없이 요청 범위의 변경을 검증·보안 점검한 뒤 commit/push한다. 사용자가 특정 작업의 push를 금지하면 그 지시를 우선한다.
 - 요청된 push 전 원격·브랜치 차이를 확인한다. `reset --hard`, 강제 push, 무단 삭제·기록 재작성으로 해결하지 않는다.
 - 명시적인 파일 목록으로 stage하고 staged diff·민감정보를 검사한다. `.env`, 실제 `secrets.toml`,
   `.local/`, `.venv/`, 원본 비공개 PDF를 커밋하지 않는다. 예제 키 값은 비워 둔다.
 - 성공한 push는 원격 커밋과 대조하고 브랜치·해시를 보고한다. Git push 가능 여부와 GitHub API/PR 생성 권한은 별개다.
-- 이번 문서 작성만 요청된 경우 문서만 작성하고, 별도 요청 없이 기능 코드를 수정하거나 commit/push하지 않는다.
+- 문서만 요청된 경우 기능 코드는 수정하지 않는다. 문서 변경도 위 상시 요청에 따라 작업 브랜치에 commit/push한다.
