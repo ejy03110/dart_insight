@@ -39,8 +39,11 @@
 | `dart_insight/cli.py` | 기존 단일 기업 연결 확인. **`--type` 생략 시 A(정기공시)**, 페이지 제한 있음 |
 | `dart_insight/data/collection.py`, `collect.py` | F2001 세 기업·유형별 전체 페이지 수집, 기간 확대, 중복 제거·집계·저장 |
 | `dart_insight/vectorstore/metadata.py`, `index_metadata.py` | F2002 JSON 검증·dry-run·임베딩 주입·persistent Chroma upsert·검증 |
-| `app.py` | 초기 Streamlit 연결 화면. 완성된 공시 선택·채팅 화면이 아님 |
-| `rag/prompts/`, `services/`, `ui/` | 후속 구현 경계. 패키지가 있다는 이유로 기능 구현으로 판단하지 않음 |
+| `app.py`, `ui/chat.py` | 공시 선택·항목별 세션 채팅·분석·조건 탐색·상태/출처 화면 |
+| `services/rag_service.py`, `runtime.py` | 수집/색인/검색/생성 E2E 구성, 지연 모델 로딩 |
+| `services/original_documents.py`, `data/collection_ledger.py` | 외부 목록 검색·ZIP/XML·실제 묶음 대체·원장/개별 다운로드 재개 |
+| `vectorstore/documents.py`, `rag/retrieval.py`, `rag/pipeline.py` | 별도 문서 청킹/색인·공시 범위 검색·LangGraph retrieve→generate·인용 검증 |
+| `docs/required-integration.md` | 공식 PDF 대조표·통합 설계·남은 실제 제출 검증 |
 
 기존 모델·클라이언트·캐시·설정을 재사용한다. 검증된 F2001 코드를 불필요하게 개편하지 않는다.
 기존 격리 체크아웃에서 작업한다. 사용자가 요청하지 않으면 별도 저장소·프로젝트·Git worktree를 만들지 않는다.
@@ -87,7 +90,7 @@ NF2001~NF2007의 응답 시간·수집 캐시·키 보호·내부 정보 비노�
 - 설정 우선순위: 환경변수 > 전달된 Streamlit Secrets > `.env` > 기본값.
   CLI는 Streamlit Secrets 파일을 직접 읽지 않는다.
 - `DART_API_KEY`: 실제 수집용. 로컬 임베딩·검색·dry-run·Mock 테스트는 API 키 불필요.
-  `OPENAI_API_KEY` 등 LLM 키는 향후 생성용이며 현재 임베딩에서는 읽어 전송하지 않는다.
+  `GMS_API_KEY`(기존 `OPENAI_API_KEY` 호환)는 GMS 생성용이며 로컬 임베딩에는 전송하지 않는다.
 - 실제 OpenAI 호출은 사용자가 명시적으로 요청한 실행에 한정한다. 현재까지의 ‘실제 API 호출 금지’를
   새 승인 없이 해제하지 않는다. import·앱 시작·테스트가 자동으로 과금 호출을 하지 않게 한다.
 - 모델 로드 전에 문서 수·모델을 알린다. 임베딩 기본값은 `BAAI/bge-m3`, CPU 실행이다.

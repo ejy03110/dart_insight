@@ -1,5 +1,32 @@
 # DART Insight 진행 현황
 
+## 필수 F2001~F2012 통합 구현 (2026-10-22 KST)
+
+이번 사용자의 통합 구현 요청과 첨부 공식 PDF가 아래 과거 단계별 상태보다 우선한다.
+공식 PDF 23쪽을 확인했으며 심화 F2013~F2016은 구현하지 않는다.
+
+- 기존 master의 F2001~F2003에 미병합 원격 F2004/Windows 수정 계보(`adc7475`, `02c947f`, `a18dafe`)를 merge했다.
+  브랜치 `feat/required-rag-integration`. master에 직접 push/자동 병합하지 않는다.
+- F2004 실제 외부 목록 검색·LLM 후보 선별·OpenDART ZIP/XML·실제 원문 묶음 대체·개별 다운로드/검색 계획 재개를 구현했다.
+- F2005 별도 `dart_documents`·1000/200 설정 청킹·항목/문서/본문설정 해시 ID·검증 후 원장 완료.
+- F2006 선택 메타 고정/공시별 문서 검색·병합/중복 제거, F2007 실제 LangGraph retrieve→generate,
+  F2008 인용 번호 검증·인용한 근거만 표시·무인용 안내를 연결했다.
+- F2009 공시별 채팅 세션, F2010 핵심 내용/명시된 위험 요인 분석, F2011 조건 후보→LLM 선별→공시 이동,
+  F2012 진행/키/색인/빈 결과/안전한 오류/금융 면책 화면을 구현했다.
+- GMS는 기존 OPENAI_API_KEY를 유지하면서 클라우드용 GMS_API_KEY 별칭을 추가했다. 직접 OpenAI 호출 없음.
+- **전체 114개 테스트 통과, 실패/skip 0** (Linux/Python 3.12). 실제 임시 Chroma/SQLite/LangGraph,
+  외부 API·BGE 임베딩은 Mock. 기존 67 + 통합 브랜치 24 + 신규 23.
+  AppTest로 채팅→항목 전환→복귀, 분석 버튼, 조건 검색→항목 이동, 무인용/안전한 오류를 확인했다.
+- pip check, compileall, CLI help, git diff --check 통과. Windows 직접 실행은 미검증이며
+  신규 Chroma 통합 검증은 자식 프로세스로 격리해 Windows 파일 잠금 정리 문제를 피한다.
+- **실제 API·BGE·1,065건 E2E 완료 아님**: 현재 머신 DART/GMS 키 없음, OpenDART/Hugging Face 프록시 403,
+  사용자 실제 collection.json/DB/모델 캐시 없음. 인수인계의 로컬 수집·색인/GMS 성공 보고와 구분한다.
+- 새 설계/공식 PDF 대조표·제출용 실검증 체크리스트: [required-integration.md](required-integration.md).
+  Windows 실행 명령은 README. 실제 품질·응답 시간·스크린샷·셀프/상호 체크리스트는 미완료다.
+
+아래 기록은 당시 상태이며 '미구현'·'설계만' 표현은 위 구현 결과로 대체한다.
+
+
 ## F2004-2 Chroma 통합 테스트 프로세스 격리 (2026-10-21)
 
 - 이전 동일 프로세스 close 방식 대신 `tests/chroma_candidate_worker.py`에서 실제 Chroma 검증 수행.

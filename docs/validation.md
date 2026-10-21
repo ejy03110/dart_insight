@@ -1,4 +1,28 @@
-# 초기 단계 검증 결과
+# 실행 검증 기록
+
+## 필수 통합 검증 (2026-10-22 KST)
+
+사용자 첨부 공식 PDF 23쪽과 통합 개발 프롬프트를 확인했다. 필수 F2001~F2012만 대상으로 하며
+[공식 요구사항 대조표](required-integration.md)를 별도 작성했다. 아래 이전 기록은 당시 상태다.
+
+| 검사 | 결과·범위 |
+|---|---|
+| 전체 unittest | **114개 통과 / 실패 0 / skip 0**, 13.125초. Linux Python 3.12.14 |
+| 신규 RAG/UI | 23개 통과. ZIP/XML·euc-kr·엔티티 거절·Bundle·GMS 오류/JSON/인용 번호·실제 그래프·조건 선별·UI 전환 |
+| Persistent 통합 worker | 실제 임시 Chroma·SQLite·LangGraph, Mock 1024벡터/LLM/수집. 재수집 없음·부분 다운로드/임베딩 실패 재개·항목 격리·재청킹·문서 DB 복구 |
+| Streamlit AppTest | 개별 공시 질문/전환/복귀·위험 분석·조건 검색에서 공시 선택·무인용·안전한 오류, 예외 없음 |
+| 의존성/구문 | pip check / compileall 통과. 새 의존성 추가·버전 갱신 없음 |
+| CLI | ask/export_documents --help 정상. 실제 API 명령은 키/자료 부재로 미실행 |
+| Git | 기존 사용자 변경 없음. 기존 F2004 및 Windows 수정 계보 보존 merge. git diff --check 통과 |
+| 실제 환경 앱 시작 | 실제 설정/키 없음/DB 없음에서 AppTest 예외 0, 키·색인 안내 정상, 서버 health ok |
+| 실제 API/모델 | **미실행**. DART_API_KEY/GMS_API_KEY/OPENAI_API_KEY 설정 부재, 실제 1,065건 자료·모델 캐시 없음. OpenDART·Hugging Face CONNECT 403 |
+| Windows 11/Python 3.11 | **직접 미실행**. requirements.txt 설치 절차 안내, Chroma 통합 검증은 자식 프로세스 격리 |
+| 실제 서비스/제출 증거 | 실제 응답 충실성·조건 선별 품질·NF2001 시간·스크린샷·셀프/상호 검증 미확인 |
+
+Mock 파이프라인의 통과는 실제 LLM의 사실 정확성·근거 충실성이나 실제 BGE 검색 품질을 입증하지 않는다.
+허용 ID·인용 번호 검증은 존재하지 않는 참조를 막는 구조 검증이며 주장과 문서의 의미 일치까지 보장하지 않는다.
+실제 키·도메인·자료를 준비한 뒤 README E2E 명령과 공식 대조표의 미체크 항목을 실행해야 한다.
+
 
 ## F2002 로컬 BGE-M3 전환 검증 (2026-10-21 KST)
 

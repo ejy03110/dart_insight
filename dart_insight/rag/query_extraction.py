@@ -19,12 +19,12 @@ class QueryExtractionError(ValueError):
 
 class QueryOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    queries: list[StrictStr] = Field(min_length=1)
+    queries: list[StrictStr] = Field(min_length=1, max_length=6)
 
     @field_validator("queries")
     @classmethod
     def normalize(cls, queries):
-        if any(not query.strip() for query in queries):
+        if any(not query.strip() or len(query) > 200 for query in queries):
             raise ValueError("Empty query")
         return list(dict.fromkeys(query.strip() for query in queries))
 

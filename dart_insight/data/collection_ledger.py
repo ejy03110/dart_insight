@@ -47,6 +47,55 @@ class CollectionLedger:
                 documents TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL,
                 PRIMARY KEY (item_rcept_no, query, source)
             )""")
+            cursor.execute("""CREATE TABLE IF NOT EXISTS collection_plans (
+                item_rcept_no TEXT NOT NULL, query TEXT NOT NULL, plan TEXT NOT NULL,
+                PRIMARY KEY (item_rcept_no, query))""")
+            cursor.execute("""CREATE TABLE IF NOT EXISTS question_queries (
+                item_rcept_no TEXT NOT NULL, question TEXT NOT NULL, queries TEXT NOT NULL,
+                PRIMARY KEY (item_rcept_no, question))""")
+            cursor.execute("""CREATE TABLE IF NOT EXISTS collected_originals (
+                item_rcept_no TEXT NOT NULL, document_rcept_no TEXT NOT NULL, document TEXT NOT NULL,
+                PRIMARY KEY (item_rcept_no, document_rcept_no))""")
+
+    def save_document(self, doc):
+        if not isinstance(doc, CollectedDocument):
+            raise ValueError("수집한 실제 원문이 필요합니다.")
+        with self._connect() as cursor:
+            cursor.execute("INSERT OR IGNORE INTO collected_originals VALUES (?, ?, ?)",
+                           (doc.item_rcept_no, doc.document_rcept_no,
+                            json.dumps(doc.to_dict(), ensure_ascii=False)))
+
+    def question_queries(self, item, question, queries=None):
+        validate_receipt(item)
+        key = (item, normalize_query(question))
+        with self._connect() as cursor:
+            if queries is not None:
+                cursor.execute("INSERT OR REPLACE INTO question_queries VALUES (?, ?, ?)",
+                               (*key, json.dumps(queries, ensure_ascii=False)))
+            row = cursor.execute("SELECT queries FROM question_queries WHERE item_rcept_no=? AND question=?", key).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def plan(self, item, query, value=None):
+        """Persist search/selection before downloads so failed downloads resume the same plan."""
+        validate_receipt(item)
+        key = (item, normalize_query(query))
+        with self._connect() as cursor:
+            if value is not None:
+                cursor.execute("INSERT OR REPLACE INTO collection_plans VALUES (?, ?, ?)",
+                               (*key, json.dumps(value, ensure_ascii=False)))
+            row = cursor.execute("SELECT plan FROM collection_plans WHERE item_rcept_no=? AND query=?", key).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def documents_for_item(self, item):
+        validate_receipt(item)
+        with self._connect() as cursor:
+            rows = cursor.execute("SELECT documents FROM collection_queries WHERE item_rcept_no=? AND state != 'pending'", (item,)).fetchall()
+            originals = cursor.execute("SELECT document FROM collected_originals WHERE item_rcept_no=?", (item,)).fetchall()
+        docs = {doc.document_rcept_no: doc for row in rows
+                for doc in (CollectedDocument(**d) for d in json.loads(row[0]))}
+        docs.update({doc.document_rcept_no: doc for doc in
+                     (CollectedDocument(**json.loads(row[0])) for row in originals)})
+        return docs
 
     @contextmanager
     def _connect(self):

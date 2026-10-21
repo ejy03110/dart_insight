@@ -34,6 +34,10 @@ class Settings:
     embedding_model: str = "BAAI/bge-m3"
     embedding_device: str = "cpu"
     embedding_cache_dir: Path | None = None
+    db_dir: Path | None = None
+    document_bundle: Path | None = None
+    document_search_days: int = 366
+    candidate_top_k: int = 5
 
     def __post_init__(self):
         if not (0 < self.timeout_seconds <= 120):
@@ -44,6 +48,12 @@ class Settings:
             raise ConfigurationError("캐시 유효 시간은 0 이상이어야 합니다.")
         if not 0 <= self.chunk_overlap < self.chunk_size or self.top_k < 1:
             raise ConfigurationError("0 ≤ CHUNK_OVERLAP < CHUNK_SIZE, TOP_K ≥ 1이어야 합니다.")
+        if self.top_k > 100 or not 1 <= self.candidate_top_k <= 20 or not 1 <= self.document_search_days <= 3660:
+            raise ConfigurationError("TOP_K ≤ 100, CANDIDATE_TOP_K는 1~20, DOCUMENT_SEARCH_DAYS는 1~3660이어야 합니다.")
+
+    @property
+    def chroma_dir(self):
+        return self.db_dir or self.data_dir / "chroma_bge_m3"
 
 
 def load_settings(secrets: Mapping | None = None) -> Settings:
@@ -57,7 +67,7 @@ def load_settings(secrets: Mapping | None = None) -> Settings:
     try:
         return Settings(
             dart_api_key=get("DART_API_KEY"),
-            openai_api_key=get("OPENAI_API_KEY"),
+            openai_api_key=get("GMS_API_KEY") or get("OPENAI_API_KEY"),
             data_dir=path if path.is_absolute() else ROOT / path,
             timeout_seconds=float(get("DART_TIMEOUT_SECONDS", 20)),
             request_interval_seconds=float(get("DART_REQUEST_INTERVAL_SECONDS", 0.3)),
@@ -70,6 +80,10 @@ def load_settings(secrets: Mapping | None = None) -> Settings:
             embedding_model=get("EMBEDDING_MODEL", "BAAI/bge-m3"),
             embedding_device=get("EMBEDDING_DEVICE", "cpu"),
             embedding_cache_dir=(ROOT / get("EMBEDDING_CACHE_DIR")) if get("EMBEDDING_CACHE_DIR") else None,
+            db_dir=(ROOT / get("CHROMA_DB_DIR")) if get("CHROMA_DB_DIR") else None,
+            document_bundle=(ROOT / get("DOCUMENT_BUNDLE")) if get("DOCUMENT_BUNDLE") else None,
+            document_search_days=int(get("DOCUMENT_SEARCH_DAYS", 366)),
+            candidate_top_k=int(get("CANDIDATE_TOP_K", 5)),
         )
     except ConfigurationError:
         raise
