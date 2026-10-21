@@ -1,5 +1,5 @@
 """F2004 models and real temporary SQLite persistence; no external services."""
-
+from contextlib import closing
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 import sqlite3
@@ -126,16 +126,18 @@ class LedgerTests(unittest.TestCase):
 
     def test_database_write_failure_rolls_back_and_can_retry(self):
         self.ledger.ensure_pending(ITEM, "위험")
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection:
             connection.execute("""CREATE TRIGGER fail_write BEFORE UPDATE ON collection_queries
                 BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END""")
+            connection.commit()
         with self.assertRaises(sqlite3.DatabaseError):
             self.ledger.mark_collected(ITEM, "위험", [document()])
         row = CollectionLedger(self.path).get(ITEM, "위험")
         self.assertEqual(row.state, "pending")
         self.assertEqual(row.documents, ())
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection:
             connection.execute("DROP TRIGGER fail_write")
+            connection.commit()
         self.ledger.mark_collected(ITEM, "위험", [document()])
         self.assertEqual(self.ledger.get(ITEM, "위험").state, "collected")
 
