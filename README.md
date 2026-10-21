@@ -1,9 +1,10 @@
 # DART Insight
 
 삼성전자·현대자동차·금양의 개별 공시를 분석하는 Python RAG 서비스 프로젝트입니다.
-현재는 **초기 구조·OpenDART 연결·F2001 메타데이터 일괄 수집 코드를 구현**했습니다.
-세 기업의 실제 고유 공시 100건 확보는 사용자의 로컬 API 실행 결과로 추가 확인해야 합니다.
-임베딩/Chroma 색인, 원문 수집·청킹, LangGraph, 채팅·요약·조건 탐색은 후속 단계입니다.
+현재는 **초기 구조·OpenDART 연결·F2001 메타데이터 수집·F2002 임베딩/Chroma 색인 CLI를 구현**했습니다.
+사용자 로컬 검증에서 F2001 1,065건(827/172/66) 수집 완료를 보고받았습니다.
+F2002는 Mock 임베딩으로 검증했으며 실제 OpenAI API 색인은 미검증입니다.
+원문 수집·청킹, LangGraph, 채팅·요약·조건 탐색은 후속 단계입니다.
 F2001~F2012는 모두 최종 필수이며 현재 전체 충족을 선언하지 않습니다.
 
 - [F2001~F2012 구현·검증 계획, 패키지/환경변수, 3일 일정](docs/requirements-analysis.md)
@@ -11,6 +12,7 @@ F2001~F2012는 모두 최종 필수이며 현재 전체 충족을 선언하지 �
 - [출처·이용 조건](docs/sources.md)
 - [실행 검증 결과와 미확인 항목](docs/validation.md)
 - [F2001 수집 명령·저장 형식·실제 검증 방법](docs/f2001.md)
+- [F2002 dry-run·색인·재실행 검증·비용 요인](docs/f2002.md)
 
 ## 실행
 
@@ -26,7 +28,7 @@ cp .env.example .env
 
 `.env`의 `DART_API_KEY`에 본인의 OpenDART 키를 로컬에서 입력하세요.
 또는 프로세스 환경변수/Streamlit Secrets로 주입하세요. 키를 채팅·소스·커밋에 넣지 마세요.
-후속 RAG에는 `OPENAI_API_KEY`가 필요하지만 현재 단계에는 필요하지 않습니다.
+F2002 실제 임베딩과 후속 RAG에는 `OPENAI_API_KEY`가 필요합니다. F2001과 dry-run에는 불필요합니다.
 Streamlit Secrets 예제는 `.streamlit/secrets.toml.example`입니다.
 
 ```bash
@@ -37,6 +39,13 @@ python -m dart_insight.cli --company 금양 --begin 2025-01-01 --end 2025-12-31 
 
 # F2001: 세 기업, A~J 전체 유형·전체 페이지, 부족하면 과거로 기간 확대
 python -m dart_insight.collect --begin 2025-01-01 --end 2025-12-31 --refresh
+
+# F2002: 입력 검증만 수행 (실제 collection.json 경로 지정, API 키 불필요)
+python -m dart_insight.index_metadata --input .local/data/metadata/run-7kvbb30c/collection.json --dry-run
+
+# 실제 임베딩: OPENAI_API_KEY 설정 후 사용자가 명시적으로 실행
+python -m dart_insight.index_metadata --input .local/data/metadata/run-7kvbb30c/collection.json --db-dir .local/data/chroma
+# 같은 명령을 재실행하여 after.total 불변·count_delta=0 확인
 
 # 초기 연결 확인 화면
 streamlit run app.py
@@ -70,8 +79,9 @@ python -m unittest discover -s tests -v
 | `dart_insight/data/cache.py` | F2001 수집 기반, NF2002의 API 응답 캐시 부분 |
 | `dart_insight/opendart/client.py` | F2001 기반 공식 기업코드·유형별 공시 목록·페이지 순회, NF2006 |
 | `dart_insight/data/collection.py`, `dart_insight/collect.py` | F2001 전체 페이지 수집·기간 확대·접수번호 중복 제거·색인 텍스트·실행별 저장·건수 보고 |
+| `dart_insight/vectorstore/metadata.py`, `dart_insight/index_metadata.py` | F2002 입력 검증·단일 컬렉션 upsert·기업 필터·변경 없는 문서 생략·건수 보고 |
 | `dart_insight/cli.py`, `app.py` | 연결 검증 진입점, F2012의 초기 진행·오류·금융 면책 안내 |
-| `vectorstore`, `rag/prompts`, `services`, `ui`의 `__init__.py` | F2002~F2012 후속 모듈의 경계만 표시, 기능 미구현 |
+| `rag/prompts`, `services`, `ui`의 `__init__.py` | F2003~F2012 후속 모듈의 경계만 표시, 기능 미구현 |
 | `tests/test_*.py` | 초기 연결·설정·캐시 로직 테스트. 실제 공시 수집이나 전체 요구사항 검증 아님 |
 | `docs/*.md` | 전체 필수 요구사항 계획·설계·검증 상태 |
 | `requirements.txt`, `requirements.lock.txt`, `.python-version`, `.gitignore` | 지정 스택·재현 설치·로컬 데이터 제외 |
