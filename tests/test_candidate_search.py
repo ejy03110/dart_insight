@@ -1,10 +1,13 @@
 """F2004-2 offline searches, including real persistent Chroma with fake vectors."""
 
+from contextlib import contextmanager, ExitStack
 from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+
+import chromadb
 
 from dart_insight.data.documents import DocumentCandidate
 from dart_insight.data.models import Disclosure
@@ -21,6 +24,23 @@ def disclosure(receipt="20250101000001", name="삼성전자"):
 def result_row(doc, distance):
     return {"id": f"meta:{doc.rcept_no}", "metadata": doc.to_dict(), "text": doc.to_index_text(),
             "distance": distance}
+
+
+@contextmanager
+def managed_metadata_collection(directory):
+    """Own the clients hidden by open_metadata_collection, only for this test.
+
+    Chroma 1.5.9's public client context manager calls close(), stopping the
+    shared System when its last client closes. No reset/delete/private cleanup.
+    ExitStack unwinds on assertions, query errors and collection-open failures.
+    """
+    constructor = chromadb.PersistentClient
+    with ExitStack() as clients:
+        def create_client(*args, **kwargs):
+            return clients.enter_context(constructor(*args, **kwargs))
+
+        with patch("chromadb.PersistentClient", side_effect=create_client):
+            yield open_metadata_collection(Path(directory), LOCAL_MODEL)
 
 
 class CandidateSearchTests(unittest.TestCase):
@@ -157,8 +177,7 @@ class ChromaCandidateTests(unittest.TestCase):
             def embed_query(self, text):
                 return [1.0] + [0.0] * (DIMENSION - 1)
 
-        with tempfile.TemporaryDirectory() as directory:
-            collection = open_metadata_collection(Path(directory), LOCAL_MODEL)
+        with tempfile.TemporaryDirectory() as directory, managed_metadata_collection(directory) as collection:
             selected, other = disclosure(), disclosure("20250101000002")
             # Index test fixtures only. The search service never indexes documents.
             index_metadata([MetadataDocument(f"meta:{other.rcept_no}", other.to_index_text(), other.to_dict())],
@@ -170,3 +189,17 @@ class ChromaCandidateTests(unittest.TestCase):
             self.assertEqual(collection.get(include=["metadatas", "documents"]), before)
             with self.assertRaises(CandidateSearchError):
                 search_candidates(collection, ["위험"], selected, Encoder(), model="wrong-model")
+
+    def test_client_cleanup_on_exception_preserves_database_and_allows_reopen(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "db"
+            with self.assertRaisesRegex(RuntimeError, "simulated test failure"):
+                with managed_metadata_collection(db) as collection:
+                    collection.upsert(ids=["fixture"], documents=["test only"],
+                                      embeddings=[[1.0] + [0.0] * (DIMENSION - 1)])
+                    raise RuntimeError("simulated test failure")
+            # close() releases handles without erasing the persistent collection.
+            with managed_metadata_collection(db) as reopened:
+                self.assertEqual(reopened.get(ids=["fixture"])["ids"], ["fixture"])
+            # Keep collection references alive: cleanup must not rely on del/GC.
+            db.rename(Path(directory) / "closed-db")

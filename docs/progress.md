@@ -1,5 +1,15 @@
 # DART Insight 진행 현황
 
+## F2004-2 Chroma 테스트 자원 정리 (2026-10-21)
+
+- 고정/설치 ChromaDB 1.5.9의 공개 Client.close()/context manager 확인.
+  close()는 공유 System 참조를 해제하고 마지막 클라이언트 종료 시 System을 중지한다.
+- 후보 검색 통합 테스트 전용 helper에서 PersistentClient 생성 시 ExitStack에 등록하고
+  예외 포함 모든 경로에서 임시 폴더 정리 전에 종료한다. 전역 캐시 초기화·reset·데이터 삭제 API 미사용.
+- 예외 후 영속 데이터 보존·재연결·폴더 rename 및 정상 임시 폴더 정리 확인.
+  전체 91개 통과(실패/skip 0, Linux/Python 3.12). Windows 직접 재검증은 미수행.
+  운영 코드·스키마·데이터 변경 없음.
+
 ## F2004-2 후보 검색 (2026-10-21)
 
 - `services/candidate_search.py`: 기존 dart_metadata/query_metadata 재사용, 다중 검색어별 top_k,
