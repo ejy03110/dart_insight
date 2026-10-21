@@ -1,5 +1,53 @@
 # DART Insight 진행 현황
 
+## F2004-2 Chroma 통합 테스트 프로세스 격리 (2026-10-21)
+
+- 이전 동일 프로세스 close 방식 대신 `tests/chroma_candidate_worker.py`에서 실제 Chroma 검증 수행.
+  부모는 sys.executable과 인자 배열로 자식을 실행하고 완전히 종료된 뒤 임시 폴더를 삭제한다.
+- 자식의 비정상 종료는 종료 코드·stdout·stderr를 부모 실패 메시지에 전달한다.
+  60초 시간 제한 초과 시 subprocess.run이 자식을 kill/wait한 후 실패하며 오류를 무시하지 않는다.
+- 정상 검색·검색 전후 불변·모델 불일치, 의도적 예외와 traceback 전달, 별도 자식의 DB 재연결 검증.
+  공개 close도 자식에서 유지하되 최종 파일 핸들 해제는 프로세스 수명으로 격리한다.
+- 전체 91개 통과(실패/skip 0, Linux/Python 3.12). Windows 직접 실행은 미수행.
+  비공개 종료 API 사용 없음. 검색 서비스·운영 DB 코드·운영 데이터 변경 없음.
+
+## F2004-2 Chroma 테스트 자원 정리 (2026-10-21)
+
+- 고정/설치 ChromaDB 1.5.9의 공개 Client.close()/context manager 확인.
+  close()는 공유 System 참조를 해제하고 마지막 클라이언트 종료 시 System을 중지한다.
+- 후보 검색 통합 테스트 전용 helper에서 PersistentClient 생성 시 ExitStack에 등록하고
+  예외 포함 모든 경로에서 임시 폴더 정리 전에 종료한다. 전역 캐시 초기화·reset·데이터 삭제 API 미사용.
+- 예외 후 영속 데이터 보존·재연결·폴더 rename 및 정상 임시 폴더 정리 확인.
+  전체 91개 통과(실패/skip 0, Linux/Python 3.12). Windows 직접 재검증은 미수행.
+  운영 코드·스키마·데이터 변경 없음.
+
+## F2004-2 후보 검색 (2026-10-21)
+
+- `services/candidate_search.py`: 기존 dart_metadata/query_metadata 재사용, 다중 검색어별 top_k,
+  접수번호 중복 제거, 회사명·출처·검색어별 거리/유사도 추적, 선택 공시 강제 포함.
+- 기존 DocumentCandidate를 감싼 CandidateHit로 검색 근거를 제공하며 기존 모델 필드를 변경하지 않는다.
+  빈 검색 결과와 예외를 구분한다. 원장 갱신·외부 API·LLM 선정·원문 다운로드·색인 구현 없음.
+- `tests/test_candidate_search.py`: Mock 및 임시 실제 Chroma/1024차원 모의 벡터로 신규 10개,
+  전체 90개 통과(실패/skip 0). 실제 사용자 DB·실제 모델 검색 품질은 미검증.
+- 사용법·결과 계약: [f2004.md](f2004.md). F2004 전체 완료를 의미하지 않는다.
+
+## F2004 SQLite 종료 경로 보완 (2026-10-21)
+
+- 원장과 트리거 테스트에서 커서를 명시적으로 닫은 뒤 트랜잭션 종료·연결 종료를 수행한다.
+  초기 설정도 try/finally 안에서 수행하여 예외 경로에서 연결이 남지 않도록 했다.
+- traceback·커서·연결 참조가 남아 있어도 종료되고 임시 DB가 즉시 삭제되는 회귀 테스트 추가.
+  오류 무시·GC 강제 호출 없이 전체 80개 통과(실패/skip 0, Linux/Python 3.12).
+  Windows 11/Python 3.11/pytest 직접 재검증은 미수행. DB 스키마·공개 기능 변경 없음.
+
+## F2004 첫 단계 (2026-10-21)
+
+- `data/documents.py`: DocumentCandidate/CollectedDocument, 선택 공시·원문 접수번호·출처·본문·수집 시각 보존 및 검증.
+- `data/collection_ledger.py`: 선택 공시+정규화 검색어+출처 기준 SQLite 영속 원장.
+  pending/collected/indexed 분리, 성공 단계만 갱신, 수집·색인 실패 후 재시도, 트랜잭션 저장.
+- F2004 모델/원장 테스트 12개 포함 전체 79개 통과, 실패/skip 0.
+  외부 API·LLM 선별·실제 색인 미구현. F2001~F2003·Chroma 코드 변경 없음.
+- 상세 계약과 사용법: [f2004.md](f2004.md). 아래 F2004 미구현 표에서 모델·원장 부분만 이 결과로 대체한다.
+
 ## F2003 추가 결과 (2026-10-21)
 
 - `rag/prompts/query_extraction.py`: 공시 분석 전문가 역할, 선택 메타데이터+질문 입력, JSON 출력 지시.
