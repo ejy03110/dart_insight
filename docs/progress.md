@@ -1,5 +1,15 @@
 # DART Insight 진행 현황
 
+## F2003 추가 결과 (2026-10-21)
+
+- `rag/prompts/query_extraction.py`: 공시 분석 전문가 역할, 선택 메타데이터+질문 입력, JSON 출력 지시.
+- `rag/query_extraction.py`: 기존 Disclosure/Settings 재사용, GMS Chat Completions,
+  기존 chat_model·openai_api_key 사용, JSON 스키마 검증, 최대 2회 파싱 재시도,
+  Python에서 선택 접수번호 강제 포함. UI와 F2001/F2002 코드는 변경하지 않았다.
+- `tests/test_query_extraction.py`: 오프라인 Mock 9개 통과. 전체 67개 통과, 실패/skip 0.
+  실제 GMS 호출·모델 권한·출력 품질은 미검증. 실행: [f2003.md](f2003.md).
+- 아래 이전 상태표의 F2003 '설계만'과 GMS '미구현'은 이 추가 결과로 대체한다.
+
 갱신일: 2026-10-21 (Asia/Seoul). 기존 F2002 기준 커밋: `dce34d8ddcb77cc634bc7bfbd2fab010b1e732c5`.
 현재 추가 작업은 로컬 BGE-M3 전환이며 commit/push 상태는 Git에서 확인한다.
 이 문서는 새 대화의 인계 자료다. 상세 구현은 기존 코드, 요구사항은 원본 PDF, 과거 실행 기록은
