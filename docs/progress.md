@@ -1,5 +1,16 @@
 # DART Insight 진행 현황
 
+## F2004-2 Chroma 통합 테스트 프로세스 격리 (2026-10-21)
+
+- 이전 동일 프로세스 close 방식 대신 `tests/chroma_candidate_worker.py`에서 실제 Chroma 검증 수행.
+  부모는 sys.executable과 인자 배열로 자식을 실행하고 완전히 종료된 뒤 임시 폴더를 삭제한다.
+- 자식의 비정상 종료는 종료 코드·stdout·stderr를 부모 실패 메시지에 전달한다.
+  60초 시간 제한 초과 시 subprocess.run이 자식을 kill/wait한 후 실패하며 오류를 무시하지 않는다.
+- 정상 검색·검색 전후 불변·모델 불일치, 의도적 예외와 traceback 전달, 별도 자식의 DB 재연결 검증.
+  공개 close도 자식에서 유지하되 최종 파일 핸들 해제는 프로세스 수명으로 격리한다.
+- 전체 91개 통과(실패/skip 0, Linux/Python 3.12). Windows 직접 실행은 미수행.
+  비공개 종료 API 사용 없음. 검색 서비스·운영 DB 코드·운영 데이터 변경 없음.
+
 ## F2004-2 Chroma 테스트 자원 정리 (2026-10-21)
 
 - 고정/설치 ChromaDB 1.5.9의 공개 Client.close()/context manager 확인.
