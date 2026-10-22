@@ -6,6 +6,7 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from dart_insight.rag.prompts.answer import ANSWER_PROMPT
+from dart_insight.rag.validation import AnswerValidationError, object_fields
 
 UNKNOWN = '제공된 문서에서 확인되지 않습니다.'
 
@@ -18,28 +19,33 @@ class RagState(TypedDict, total=False):
 
 
 def validate_answer(value, evidence, question=''):
-    if not isinstance(value, dict) or set(value) != {'answer', 'supported'}:
-        raise ValueError('Invalid answer schema')
-    if type(value['supported']) is not bool or not isinstance(value['answer'], str) or not value['answer'].strip():
-        raise ValueError('Invalid answer')
+    object_fields(value, ('answer', 'supported'), AnswerValidationError)
+    if type(value['supported']) is not bool:
+        raise AnswerValidationError('schema', 'supported', 'boolean_required')
+    if not isinstance(value['answer'], str):
+        raise AnswerValidationError('schema', 'answer', 'string_required')
+    if not value['answer'].strip():
+        raise AnswerValidationError('schema', 'answer', 'nonempty_string')
     if not value['supported']:
         return {'answer': UNKNOWN, 'citations': []}
     numbers = list(dict.fromkeys(int(n) for n in re.findall(r'\[근거\s*(\d+)\]', value['answer'])))
-    if not numbers or any(n < 1 or n > len(evidence) for n in numbers):
-        raise ValueError('Unknown or missing citations')
+    if not numbers:
+        raise AnswerValidationError('citation', 'answer', 'citation_required')
+    if any(n < 1 or n > len(evidence) for n in numbers):
+        raise AnswerValidationError('citation', 'answer', 'citation_number_out_of_range')
     # Reject malformed citation tokens rather than displaying fabricated references.
     remaining = re.sub(r'\[근거\s*\d+\]', '', value['answer'])
     if '[근거' in remaining:
-        raise ValueError('Invalid citation token')
+        raise AnswerValidationError('citation', 'answer', 'citation_token_format')
     if re.search(r'취득.*(?:원인|목적|이유)', question):
         if re.search(r'(?:목적|이유|원인)\s*[:：]\s*(?:장내매수|장외매수|시간외매수)', value['answer']):
-            raise ValueError('Acquisition method cannot serve as purpose')
+            raise AnswerValidationError('grounding', 'answer', 'acquisition_method_is_not_purpose')
         explicit_purpose = any(re.search(r'취득\s*(?:의\s*)?(?:목적|이유)', e.text) for e in evidence
                                if e.source_type == 'opendart_document')
         if not explicit_purpose and not re.search(
                 r'목적.{0,200}?(?:확인\s*(?:되지|할\s*수\s*없|불가|불가능)|명시되어 있지|명시되지|기재되지)',
                 value['answer'], re.S):
-            raise ValueError('Missing acquisition purpose must be acknowledged')
+            raise AnswerValidationError('grounding', 'answer', 'missing_purpose_acknowledgement')
     return {'answer': value['answer'],
             'citations': [{'number': n, **evidence[n - 1].to_dict()} for n in numbers]}
 

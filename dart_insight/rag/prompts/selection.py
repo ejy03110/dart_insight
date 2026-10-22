@@ -1,4 +1,6 @@
 """Prompt 2: separate relevance selection, before downloading document bodies."""
+from dart_insight.rag.validation import SelectionValidationError, object_fields
+
 SELECTION_PROMPT = '''당신은 국내 기업 공시 분석 전문가입니다.
 JSON 데이터의 질문과 선택 공시를 보고 candidates 중 답변에 직접 관련된 문서만 선택하세요.
 제목과 요약에 없는 본문·수치·정정 관계를 추측하지 마세요. 관련 후보가 없으면 빈 배열입니다.
@@ -19,9 +21,12 @@ interpretation에 지정한 연도 기준을 반드시 따르세요. 단순 “2
 
 
 def selected_ids(value, allowed):
-    if not isinstance(value, dict) or set(value) != {"selected_ids"}:
-        raise ValueError("Invalid selection")
-    ids = value["selected_ids"]
-    if not isinstance(ids, list) or any(not isinstance(i, str) or i not in allowed for i in ids):
-        raise ValueError("Unknown candidate")
+    object_fields(value, ('selected_ids',), SelectionValidationError)
+    ids = value['selected_ids']
+    if not isinstance(ids, list):
+        raise SelectionValidationError('schema', 'selected_ids', 'array_required')
+    if any(not isinstance(i, str) for i in ids):
+        raise SelectionValidationError('schema', 'selected_ids', 'string_items_required')
+    if any(i not in allowed for i in ids):
+        raise SelectionValidationError('citation', 'selected_ids', 'candidate_id_not_allowed')
     return list(dict.fromkeys(ids))

@@ -111,3 +111,5 @@ XML 진단·공시별 기록 복원·분석/채팅 분리·인용 링크·복사
 배포 승인 후에는 Secrets 및 별도 초기 데이터 복원 → 모델 cold start RAM/시간 측정 → 기업/공시 검색 →
 실제 분석/후속 질문/출처 확인 → 재분석 재사용 → 서버 재시작 후 복구 여부 순으로 검증한다.
 OOM/재시작 반복이면 배포 성공으로 판정하지 않는다.
+
+실제 200/stop 검증 실패의 field/rule별 후속 로그: [gms-validation-diagnostics.md](gms-validation-diagnostics.md).

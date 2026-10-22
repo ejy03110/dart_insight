@@ -1,5 +1,19 @@
 # 실행 검증 기록
 
+## 실제 GMS 검증 로그 후속 진단 (2026-10-22 UTC)
+
+- 사용자 실제 HTTP 200/finish=stop/schema_or_grounding 로그는 JSON 해석 후 콜백 검증 실패를 뜻한다.
+  기존 메시지로는 필드/인용/내부 오류를 구별할 수 없다. 실제 응답/키가 없어 단일 원인 확정 불가.
+- AnswerValidationError/SelectionValidationError로 schema/citation/grounding 및 정적 field/rule 구분.
+  클래스/규칙/근거 개수만 기록하며 값·원문·임의 추가 필드명·예외 메시지는 출력하지 않는다.
+  미분류 내부 검증 오류는 별도 코드로 즉시 실패, 교정 가능한 출력만 기존 한도 내 재시도.
+- JSON 두 필드와 answer 내부 Markdown/boolean 자료형, 인용 number와 실제 청크 id 차이를 프롬프트에 명시.
+  기존 검증 조건을 완화하거나 인용을 임의 보정하지 않는다. 분석/채팅 동일 경로의 정확한 ID 매핑 테스트 추가.
+- 전체 **157개 통과 / 실패 0 / skip 0**, 13.146초(기존 150 + 신규 7). Mock 경계와 실제 LangGraph/임시 DB 회귀 검증.
+  [진단 절차](gms-validation-diagnostics.md) 참고.
+  실제 API/Windows 브라우저 미검증. 데이터/모델/DB 변경 없음.
+
+
 ## Q-11 성능 계측 / Q-12 GMS 검증 / 무료 배포 준비 (2026-10-22 UTC)
 
 - GMS 실패 실제 응답/키는 없어 Windows 원인은 미확정. envelope/종료 사유/JSON/스키마·근거 오류 분리,
