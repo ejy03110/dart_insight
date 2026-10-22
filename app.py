@@ -44,14 +44,31 @@ def navigate(page, receipt=None, company=None):
         st.session_state['ui_section'] = None
 
 
+RETURN_FILTERS = ('explore_search','explore_company','explore_type','explore_dates','explore_page',
+                  'recent_search','recent_company','recent_type','recent_dates','recent_page')
+
+
 def open_recent(disclosure):
+    st.session_state['recent_return'] = {
+        'scope': st.session_state.get('explore_scope','최근 7일 공시') if st.session_state.get('ui_page')=='공시 탐색' else '최근 7일 공시',
+        'filters': {key:st.session_state[key] for key in RETURN_FILTERS if key in st.session_state}}
     st.session_state['recent_detail'] = disclosure
     navigate('공시 상세')
 
 
 def back_to_recent():
-    st.session_state['explore_scope'] = '최근 7일 공시'
+    snapshot=st.session_state.get('recent_return',{})
+    st.session_state.update(snapshot.get('filters',{}))
+    st.session_state['explore_scope'] = snapshot.get('scope','최근 7일 공시')
     navigate('공시 탐색')
+
+
+def remember_scope():
+    st.session_state['explore_scope']=st.session_state['_explore_scope']
+
+
+def remember_page():
+    st.session_state['explore_page']=st.session_state['_explore_page']
 
 
 def menu_changed():
@@ -148,7 +165,8 @@ if page == '분석 기록':
 
 if page == '공시 탐색':
     st.title('공시 탐색')
-    scope = st.radio('공시 범위', ['보관된 공시', '최근 7일 공시'], key='explore_scope')
+    st.session_state['_explore_scope']=st.session_state.get('explore_scope','보관된 공시')
+    scope = st.radio('공시 범위', ['보관된 공시', '최근 7일 공시'], key='_explore_scope',on_change=remember_scope)
     if scope == '최근 7일 공시':
         from dart_insight.ui.recent import render_recent_list
         render_recent_list(settings, by_id, open_recent)
@@ -225,7 +243,8 @@ if page == '공시 탐색':
         pages = list(range(1, (len(options) - 1) // 20 + 2))
         if st.session_state.get('explore_page', 1) not in pages:
             st.session_state['explore_page'] = 1
-        number = st.selectbox('목록 페이지', pages, key='explore_page')
+        st.session_state['_explore_page']=st.session_state.get('explore_page',1)
+        number = st.selectbox('목록 페이지', pages, key='_explore_page',on_change=remember_page)
         for disclosure in options[(number - 1) * 20:number * 20]:
             with st.container(border=True):
                 st.subheader(disclosure.report_nm)
@@ -239,8 +258,9 @@ if page == '공시 상세':
     if recent_selected is None:
         st.info('공시 탐색에서 공시를 다시 선택해 주세요.')
         st.stop()
-    st.button('← 공시 목록', key='back_to_recent', on_click=back_to_recent)
-    render_disclosure_header(recent_selected)
+    render_disclosure_header(recent_selected,show_source=False,show_identifiers=False)
+    from dart_insight.ui.document_view import render_document
+    render_document(settings,recent_selected)
     indexed = by_id.get(recent_selected.rcept_no)
     if indexed is not None and indexed.corp_code == recent_selected.corp_code:
         st.caption('보관된 공시 · AI 분석 가능')
@@ -248,6 +268,9 @@ if page == '공시 상세':
                   args=('공시 분석', indexed.rcept_no))
     else:
         st.info('아직 분석 준비가 되지 않은 공시입니다. 공식 DART 원문에서 내용을 확인해 주세요.')
+    st.link_button('공식 DART 원문 보기 ↗',recent_selected.source_url)
+    with st.container(key='detail_return'):
+        st.button('← 공시 목록으로 돌아가기', key='back_to_recent', on_click=back_to_recent)
     st.stop()
 
 receipt = st.session_state.get('chosen_receipt')

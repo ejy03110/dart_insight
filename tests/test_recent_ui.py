@@ -38,10 +38,10 @@ class RecentUiTests(unittest.TestCase):
         app.button(key='load_recent').click().run()
         app.button(key='company_005930').click().run()
         self.assertEqual(app.session_state['ui_page'],'공시 탐색')
-        app.radio(key='explore_scope').set_value('최근 7일 공시').run()
+        app.radio(key='_explore_scope').set_value('최근 7일 공시').run()
         self.assertTrue(any('미색인 공시' in c.value for c in app.caption))
         self.assertTrue(any('보관된 공시 · AI 분석 가능'==c.value for c in app.caption))
-        app.text_input(key='recent_search').set_value('삼성전자').run()
+        app.text_input(key='_recent_search').set_value('삼성전자').run()
         self.assertEqual(client.list_disclosures.call_count,calls)
         factory.assert_called_once()
         self.service_rag_not_called()
@@ -62,7 +62,7 @@ class RecentUiTests(unittest.TestCase):
         self.assertTrue(any('아직 분석 준비가 되지 않은 공시' in i.value for i in app.info))
         self.runtime.assert_not_called()
         app.button(key='back_to_recent').click().run()
-        self.assertEqual(app.radio(key='explore_scope').value,'최근 7일 공시')
+        self.assertEqual(app.radio(key='_explore_scope').value,'최근 7일 공시')
 
     def test_indexed_recent_detail_opens_existing_rag_without_indexing(self):
         _,_,_,rows=self.build_recent()

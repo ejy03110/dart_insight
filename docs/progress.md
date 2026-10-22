@@ -1,5 +1,31 @@
 # DART Insight 진행 현황
 
+## UI/UX 6단계 — 최신 본문 열람·복귀 수정 (2026-10-22 KST)
+
+- 시작: 원격 FETCH_HEAD/로컬 `0ab35ff` 일치, 변경 없는 `feat/ui-ux-improvement`.
+  사용자 로컬의 실제 최근 공시/RAG/관리자 정상 보고를 기록하며 본 작업의 실제 본문 API 검증과 구분한다.
+- `services/document_view.py`, `ui/document_view.py`: 기존 DartClient document.xml 요청과 기존 엄격한
+  XML/HTML 파서 보정을 재사용한 독립 열람. 버튼 요청만 수행, RAG/LLM/임베딩/DB/진단 파일 쓰기 없음.
+  ZIP XML/HTML/HTM·직접 XML/HTML, 안전한 제목/문단/표·수치/병합 보존, 전체 텍스트 대안.
+  PDF/이미지/미지원/빈 본문/실패는 공식 원문 안내, 부분 본문이나 가짜 자료 없음.
+  성공 1시간/실패 1분, 동시 요청 잠금, 최대 20건/32 MiB 메모리 캐시.
+- `app.py`, `ui/recent.py`: explore_scope/recent_search/페이지 등의 위젯 key와 보존 상태를 분리.
+  최근 공시 상세 전 필터 스냅샷 복원, 최근 목록 기업/기간/유형·검색·페이지 제공/유지.
+  기존 chosen_receipt/histories/analyses 보존. 정확한 픽셀 스크롤/브라우저 history 라우팅은 구현하지 않음.
+- 상세 상단 복귀 버튼 제거. 제목/날짜→실제 본문→공식 링크→하단 복귀 버튼 배치,
+  문구 '← 공시 목록으로 돌아가기', 왼쪽 정렬. 표/본문 내부 스크롤 없이 전체 페이지 확장.
+- 변경 전 전체 **233 통과/실패 0/skip 0**, 변경 후 **248 통과/실패 0/skip 0**, 최종 41.924초.
+  신규 15개: XML/HTML/ZIP·표·문자/구조 대안·스크립트/엔티티·첨부/크기·빈/실패/미지원,
+  명시적 요청·TTL/LRU·공식 URL·본문 읽기 RAG 미호출·하단 복귀·검색/기업/기간/유형/2페이지 복원·대화 보존.
+- Chromium 1440px/390px에서 실제 표·긴 본문·하단 공식 링크/버튼 순서·왼쪽 정렬·간격 **28px**,
+  본문 내부 스크롤/가로 넘침/예외 없음, 상세→동일한 목록 2페이지/기업/유형 복원 확인.
+  요청 1회 뒤 새로고침/복귀로 추가 본문 요청 없음. 합성 자료/응답이며 실제 API 검증이 아님.
+- DART_API_KEY 없음 확인: 실제 API 호출하지 않음. 사용자 실제 원문/운영 DB 품질은 미검증.
+  run_question/render_result/render_turn AST 동일, 기존 OpenDART 수집/RAG/관리자 인증 파일 변경 없음.
+- `.env`, `.streamlit/secrets.toml`, `.local/` 무시 확인 및 git ls-files 추적 0건.
+  secrets.toml.example의 인증 필드 빈 값 확인, 파일 내용 변경 없음. pip check·diff 검사 통과.
+  지원/미지원·캐시·이동 한계: [original-viewer.md](original-viewer.md).
+
 ## UI/UX 5단계 — 최근 7일 공시 (2026-10-22 KST)
 
 - 기준 `9de8643`, `feat/ui-ux-improvement`. 기존 RAG/관리자 인증/DB/색인/환경변수 초기화 없음.

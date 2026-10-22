@@ -37,6 +37,11 @@ def apply_theme():
     .company-card p {margin:.3rem 0;color:#526982;}
     .company-card strong {font-size:1.3rem;color:#163d66;}
     [data-testid="stLinkButton"] a {border-radius:10px;}
+    .st-key-detail_return {padding-top:12px;}
+    .original-document {max-width:100%;overflow-wrap:anywhere;line-height:1.8;}
+    .original-document table {width:100%;table-layout:fixed;border-collapse:collapse;margin:1rem 0;}
+    .original-document td,.original-document th {border:1px solid #dce4ee;padding:.5rem;white-space:pre-wrap;overflow-wrap:anywhere;}
+    .original-document p,.document-text {white-space:pre-wrap;overflow-wrap:anywhere;}
     @media(max-width:700px) {
         .block-container {padding:1rem .8rem 2rem;}
         .research-hero {padding:1.4rem;min-height:180px;}
@@ -88,9 +93,11 @@ def render_company_overview(disclosures, companies, search, navigate, recent=Non
 
 
 
-def render_disclosure_header(selected):
+def render_disclosure_header(selected,*,show_source=True,show_identifiers=True):
     st.caption(f'{selected.corp_name} · {selected.rcept_dt} · {selected.disclosure_type}')
     st.subheader(selected.report_nm)
-    st.link_button('공식 DART 원문 보기 ↗', selected.source_url)
-    with st.expander('공시 식별 정보'):
-        st.text(f'접수번호: {selected.rcept_no}')
+    if show_source:
+        st.link_button('공식 DART 원문 보기 ↗', selected.source_url)
+    if show_identifiers:
+        with st.expander('공시 식별 정보'):
+            st.text(f'접수번호: {selected.rcept_no}')
