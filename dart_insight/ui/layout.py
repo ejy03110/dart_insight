@@ -21,7 +21,7 @@ def apply_theme():
     .block-container {max-width:1320px;padding-top:2rem;padding-bottom:3rem;}
     h1,h2,h3 {color:#102c50;letter-spacing:-.035em;}
     [data-testid="stVerticalBlockBorderWrapper"] {border-radius:16px;}
-    .st-key-disclosure_analysis, .st-key-disclosure_chat, .company-card {
+    .st-key-disclosure_analysis, .st-key-disclosure_chat, [class*="st-key-company_card_"] {
         background:white;border:1px solid #dce4ee;border-radius:16px;padding:1.2rem;}
     .research-hero {position:relative;overflow:hidden;border-radius:20px;margin-bottom:1.4rem;
         background:linear-gradient(110deg,#fff,#e4edf5);min-height:210px;padding:2.2rem;}
@@ -32,7 +32,7 @@ def apply_theme():
     .research-hero .hero-copy {position:relative;z-index:1;max-width:720px;}
     .research-hero h1 {font-size:clamp(1.8rem,3.3vw,3rem);line-height:1.3;margin:.5rem 0;}
     .eyebrow {color:#326596;font-size:.9rem;font-weight:600;}
-    .company-card {height:100%;min-height:130px;margin-bottom:.75rem;}
+    [class*="st-key-company_card_"] {height:100%;min-height:130px;margin-bottom:.75rem;}
     .company-card h3 {margin:0;font-size:1.1rem;}
     .company-card p {margin:.3rem 0;color:#526982;}
     .company-card strong {font-size:1.3rem;color:#163d66;}
@@ -40,8 +40,8 @@ def apply_theme():
     @media(max-width:700px) {
         .block-container {padding:1rem .8rem 2rem;}
         .research-hero {padding:1.4rem;min-height:180px;}
-        [data-testid="stHorizontalBlock"]:has(.company-card) {flex-wrap:wrap;}
-        [data-testid="stColumn"]:has(.company-card) {min-width:100%;}
+        [data-testid="stHorizontalBlock"]:has([class*="st-key-company_card_"]) {flex-wrap:wrap;}
+        [data-testid="stColumn"]:has([class*="st-key-company_card_"]) {min-width:100%;}
         .st-key-disclosure_analysis,.st-key-disclosure_chat {padding:.8rem;}
     }
     </style>''', unsafe_allow_html=True)
@@ -62,24 +62,30 @@ def render_hero(section):
         </div></section>''', unsafe_allow_html=True)
 
 
-def render_company_overview(disclosures, companies, search):
-    # Counts describe stored metadata, never a claim about the latest market data.
-    from html import escape
+def render_company_overview(disclosures, companies, search, navigate):
     visible = [c for c in companies if not search or search.casefold() in c.name.casefold() or search in c.stock_code]
-    st.subheader('기업 한눈에 보기')
-    st.caption('현재 저장된 공시 기준 · 기업명 또는 종목코드로 아래 공시 목록을 좁힐 수 있습니다.')
+    st.subheader('기업 살펴보기')
     if not visible:
+        st.info('검색한 기업을 찾을 수 없습니다.')
         return
     for column, company in zip(st.columns(len(visible)), visible):
-        count = sum(d.corp_name == company.name for d in disclosures)
+        rows = [d for d in disclosures if d.corp_name == company.name]
         with column:
-            st.markdown(f'''<div class="company-card"><h3>{escape(company.name)}</h3>
-                <p>{escape(company.stock_code)}</p><strong>{count:,}건</strong><p>분석 가능한 저장 공시</p></div>''',
-                unsafe_allow_html=True)
+            with st.container(border=True, key='company_card_' + company.stock_code):
+                st.subheader(company.name)
+                st.caption(company.stock_code)
+                if rows:
+                    latest = max(rows, key=lambda d: d.rcept_dt)
+                    st.caption('보관된 공시 중 가장 최근 자료')
+                    st.write(latest.report_nm)
+                    st.caption(latest.rcept_dt)
+                    st.button('공시 살펴보기', key='company_' + company.stock_code,
+                              on_click=navigate, args=('공시 탐색', None, company.name))
+                else:
+                    st.caption('현재 살펴볼 수 있는 공시가 없습니다.')
 
 
 def render_disclosure_header(selected):
-    st.divider()
     st.caption(f'{selected.corp_name} · {selected.rcept_dt} · {selected.disclosure_type}')
     st.subheader(selected.report_nm)
     st.link_button('공식 DART 원문 보기 ↗', selected.source_url)
