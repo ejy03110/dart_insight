@@ -20,10 +20,16 @@ from dart_insight.rag.llm import GmsClient, LLMError
 from dart_insight.rag.query_extraction import QueryExtractionError
 from dart_insight.ui.chat import history_for, save_turn, group_citations, separate_legacy_analysis, render_copy_option
 from dart_insight.vectorstore.metadata import MetadataIndexError
+from dart_insight.ui.layout import apply_theme, render_hero, render_company_overview, render_disclosure_header
 
 st.set_page_config(page_title='DART Insight', page_icon='📄', layout='wide')
-st.title('DART Insight')
-st.caption('공시 선택 · 근거 기반 질의응답 · 공시 핵심 내용 및 위험 요인 분석')
+apply_theme()
+with st.sidebar:
+    st.markdown('## DART Insight')
+    st.caption('공시로 보는 기업의 오늘과 내일')
+    section = st.radio('화면 이동', ['홈', '공시 탐색', '분석 기록'], key='ui_section', label_visibility='collapsed')
+    st.divider()
+render_hero(section)
 st.warning(DISCLAIMER)
 try:
     secrets = dict(st.secrets) if st.secrets else {}
@@ -90,12 +96,17 @@ except Exception:
     st.error('메타데이터 조회 실패: DB 경로·컬렉션 형식을 확인해 주세요.')
     st.stop()
 
-st.sidebar.metric('메타데이터 색인 수', metadata.count())
-st.sidebar.caption('항목 1건 = 개별 공시 1건. 모델은 첫 검색·색인 시 로드됩니다.')
+with st.sidebar.expander('데이터 준비 상태'):
+    st.metric('분석 가능한 공시', metadata.count())
+    st.caption('저장된 공시 기준입니다. 최신 공시 자동 조회는 하지 않습니다.')
+search = st.text_input('기업명 또는 종목코드 검색', placeholder='예: 삼성전자, 005930', key='company_search').strip()
+if section == '홈':
+    render_company_overview(disclosures, COMPANIES, search)
 company_filter = st.sidebar.selectbox('공시 기업', ['전체', *[c.name for c in COMPANIES]])
-options = [d for d in disclosures if company_filter == '전체' or d.corp_name == company_filter]
+options = [d for d in disclosures if (company_filter == '전체' or d.corp_name == company_filter)
+           and (not search or search.casefold() in d.corp_name.casefold() or search in d.stock_code)]
 if not options:
-    st.info('선택 기업의 공시 색인이 없습니다.')
+    st.info('조건에 맞는 저장된 공시가 없습니다. 기업명이나 종목코드를 확인해 주세요.')
     st.stop()
 by_id = {d.rcept_no: d for d in options}
 
@@ -136,12 +147,30 @@ if 'discovery_results' in st.session_state:
         m = row['metadata']
         if st.sidebar.button(f"{m['corp_name']} · {m['report_nm']} · {m['rcept_dt']}", key='result_' + m['rcept_no']):
             st.session_state['chosen_receipt'] = m['rcept_no']
+# Session records select the same receipt widget; they never run an analysis.
+with st.sidebar.expander('기업별 대화 기록', expanded=section == '분석 기록'):
+    st.caption('현재 접속 중인 세션의 기록입니다. 새 접속이나 서버 재시작 후에는 유지되지 않습니다.')
+    saved_histories = st.session_state.get('histories', {})
+    saved_analyses = st.session_state.get('analyses', {})
+    recorded = [d for d in options if saved_histories.get(d.rcept_no) or d.rcept_no in saved_analyses]
+    if not recorded:
+        st.caption('현재 기업·검색 범위에 저장된 분석이나 대화가 없습니다.')
+    for company in COMPANIES:
+        company_records = [d for d in recorded if d.corp_name == company.name]
+        if company_records:
+            st.markdown(f'**{company.name}**')
+            for disclosure in company_records:
+                if st.button(f'{disclosure.report_nm} · {disclosure.rcept_dt}', key='history_' + disclosure.rcept_no):
+                    st.session_state['chosen_receipt'] = disclosure.rcept_no
+if section == '분석 기록':
+    st.info('왼쪽 기업별 대화 기록에서 이전 공시를 선택하세요. 기록은 현재 세션에서만 복원됩니다.')
+
 if st.session_state.get('chosen_receipt') not in by_id:
     st.session_state['chosen_receipt'] = options[0].rcept_no
 receipt = st.selectbox('질문할 개별 공시', list(by_id), key='chosen_receipt',
-                       format_func=lambda r: f'{by_id[r].corp_name} · {by_id[r].report_nm} · {by_id[r].rcept_dt} · {r}')
+                       format_func=lambda r: f'{by_id[r].corp_name} · {by_id[r].report_nm} · {by_id[r].rcept_dt}')
 selected = by_id[receipt]
-st.caption(f'공시 원문: {selected.source_url}')
+render_disclosure_header(selected)
 histories = st.session_state.setdefault('histories', {})
 analyses = st.session_state.setdefault('analyses', {})
 separate_legacy_analysis(histories, analyses, ANALYSIS_QUESTION)
@@ -155,7 +184,7 @@ def render_result(result):
     notes = result.get('audit', {}).get('parse_notes', [])
     if notes:
         st.warning('원문의 제목 표기·문자 엔티티·HTML 구조 처리 내역을 아래에서 확인하세요.')
-        with st.expander('XML 보정 내역'):
+        with st.expander('원문 처리 상세 · XML 보정 내역'):
             for note in notes:
                 st.text(note)
     if result.get('audit', {}).get('answer_basis') == 'conversation':
@@ -168,12 +197,12 @@ def render_result(result):
             label = '항목 메타데이터' if citation['source_type'] == 'opendart_metadata' else '외부 문서'
             st.caption(f"[근거 {citation['number']}] {label}")
         st.write(group['source'])
-        with st.expander('인용한 근거 청크 보기'):
+        with st.expander('근거 내용 및 문서 식별 정보'):
             for citation in group['citations']:
                 st.caption(f"[근거 {citation['number']}] 청크 {citation['id']}")
                 st.text(citation.get('text', ''))
     if result.get('audit'):
-        with st.expander('검색어 및 선별된 문서 확인'):
+        with st.expander('분석 과정 상세'):
             st.json(result['audit'])
 
 
@@ -228,8 +257,9 @@ with st.container(border=True, key='disclosure_analysis'):
 
 with st.container(key='disclosure_chat'):
     st.subheader('공시 관련 추가 질문')
-    for turn in history_for(histories, receipt):
-        render_turn(turn)
+    with st.container(height=450, autoscroll=True, key='conversation_messages'):
+        for turn in history_for(histories, receipt):
+            render_turn(turn)
     question = st.chat_input('선택 공시에 대해 추가 질문하세요', key='followup_question')
     if question:
         result = run_question(question, history=[dict(turn) for turn in history_for(histories, receipt)])

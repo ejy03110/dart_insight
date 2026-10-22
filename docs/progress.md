@@ -1,5 +1,29 @@
 # DART Insight 진행 현황
 
+## UI/UX 2단계 — 화면 골격 (2026-10-22 KST)
+
+- 기준: origin/master `7102925`, 작업 브랜치 `feat/ui-ux-improvement`. push/병합 없음.
+- `app.py`, `ui/layout.py`: 네이비 사이드바·화이트/블루그레이 본문·로컬 빌딩 배경,
+  홈/공시 탐색/분석 기록, 기업명/종목코드 로컬 필터, 저장 공시 수 카드,
+  제목·날짜·공식 DART 링크, 접힌 식별/원문 처리/근거 상세. 장식용 차트 없음.
+- 기업별 기록은 기존 세션의 histories/analyses만 표시하며 선택은 chosen_receipt에 연결한다.
+  새 접속/서버 재시작 복원·주가 조회·기업 추가·자동 수집·영구 저장은 구현하지 않았다.
+- Runtime.ask, run_question/cached_store 함수, 공시별 상태 계약·백엔드·데이터 구조·의존성 파일 변경 없음.
+- 구현 전 전체 199개: 198 통과/1 실패/skip 0. 기존 채팅 영역에 native autoscroll 컨테이너가 없어
+  test_multiturn_context_is_scoped_and_input_remains_after_all_messages가 실패했다.
+  화면 영역만 height=450/autoscroll=True로 보완했다.
+- 구현 후 전체 **201개 통과 / 실패 0 / skip 0** (기존 199 + tests/test_ui_shell.py 2개), 23.797초.
+  기존 공시 선택·조건 검색·분석·멀티턴·복귀·인용 번호·검증 경고 및 단순 UI 조작 시 호출 없음 검증.
+  Mock HTTP/GMS/BGE + 임시 실제 DB/LangGraph이며 운영 DB나 사용자 데이터 검증이 아니다.
+- Chromium 실제 브라우저: Mock 저장소를 주입한 현재 앱에서 1440px/390px 실행 오류 0,
+  document/body 폭=viewport 폭, PC 카드 가로/모바일 카드 세로 배치 확인.
+  자격증명 없는 실제 app.py 시작·health HTTP 200·브라우저 예외 없음 확인.
+  pip check·git diff --check 통과. 실제 OpenDART/GMS/BGE 품질·운영 색인은 미검증.
+- 배경 `ui/assets/buildings.webp`: 이번 UI용으로 생성한 건물 이미지, 생성 원본에서 WebP 변환.
+  실행 중 외부 이미지 조회 없음. 서비스/증시 실데이터를 표현하는 이미지가 아니다.
+- 실행: 저장소 루트에서 `.venv/bin/python -m streamlit run app.py`.
+  실제 분석에는 기존 메타데이터 DB 및 DART/GMS 설정이 필요하며 시작만으로 API를 호출하지 않는다.
+
 ## RAG 핵심 주장 검증 최소 보강 (2026-10-22 UTC)
 
 - F2007/F2008: 배정 대상·의무보유 주체·사실/해석·자금 목적 프롬프트 보강.
