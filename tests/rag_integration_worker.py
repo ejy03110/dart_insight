@@ -132,6 +132,12 @@ def main(directory):
     # One external search per distinct generated query, including the pinned receipt.
     check.assertEqual(second_source.search_calls, 2)
     check.assertEqual(second_ledger.get(selected.rcept_no, '위험').state, 'indexed')
+    # Multi-document intent can retain the additional selected original, while
+    # the earlier single-document case explicitly rejected it. No forced quota.
+    plan = second_ledger.plan(selected.rcept_no, '위험')
+    check.assertIn(other.rcept_no, plan['selected_ids'])
+    check.assertTrue(docs.get(where={'$and': [{'item_rcept_no': selected.rcept_no},
+                                            {'document_rcept_no': other.rcept_no}]}, include=[])['ids'])
     # A failed embedding must not promote a newly collected query to indexed.
     class FailingEncoder(Encoder):
         def embed_query(self, text):
@@ -155,6 +161,26 @@ def main(directory):
     docs.delete(where={'item_rcept_no': selected.rcept_no})
     service.prepare(selected, '위험은?')
     check.assertGreater(len(docs.get(where={'item_rcept_no': selected.rcept_no}, include=[])['ids']), 0)
+    # Same generated query, new comparison question: reuse the external search
+    # but reselect cached candidates, downloading only newly chosen originals.
+    shared_docs = open_document_collection(directory / 'question-scoped-db', LOCAL_MODEL)
+    shared_ledger = CollectionLedger(directory / 'question-scoped.sqlite3')
+    shared_source, shared_llm = Source(other), LLM()
+    shared_service = RagService(settings, metadata, shared_docs, enc, shared_ledger, shared_source, shared_llm)
+    shared_service.prepare(selected, '이 공시만 분석')
+    searches = shared_source.search_calls
+    shared_llm.include_other = True
+    compared = shared_service.prepare(selected, '두 공시를 비교')
+    check.assertEqual(shared_source.search_calls, searches)
+    check.assertEqual(shared_source.collect_calls.count(selected.rcept_no), 1)
+    check.assertEqual(shared_source.collect_calls.count(other.rcept_no), 1)
+    check.assertTrue(any(other.rcept_no in p['selected_ids'] for p in compared['selection']))
+    selections = shared_llm.select_calls
+    shared_service.prepare(selected, '두 공시를 비교')
+    check.assertEqual(shared_llm.select_calls, selections)
+    # Old completed base-query rows are preserved, not overwritten/downgraded.
+    check.assertEqual([d.document_rcept_no for d in shared_ledger.get(selected.rcept_no, '위험').documents],
+                      [selected.rcept_no])
     print('RAG_INTEGRATION_PASSED: persistent Chroma, ledger resume, LangGraph, citations, isolation, rechunking')
 
 

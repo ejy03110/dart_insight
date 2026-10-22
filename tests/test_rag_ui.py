@@ -57,8 +57,10 @@ class RagUiTests(unittest.TestCase):
         self.assertEqual(len(app.chat_message), 2)
         app.button[1].click().run()  # connection submit is button 0
         self.assertIn('위험 요인', self.service.ask.call_args.args[1])
-        self.assertEqual(len(app.session_state['histories'][FIRST.rcept_no]), 4)
-        self.assertTrue(any('외부 문서' in str(x.value) or '항목 메타데이터' in str(x.value) for x in app.markdown))
+        self.assertEqual(len(app.session_state['histories'][FIRST.rcept_no]), 2)
+        self.assertIn(FIRST.rcept_no, app.session_state['analyses'])
+        self.assertEqual(len(app.chat_message), 2)
+        self.assertTrue(any('외부 문서' in str(x.value) or '항목 메타데이터' in str(x.value) for x in app.caption))
 
     def test_uncited_answer_notice_and_safe_failure(self):
         app = AppTest.from_file(APP, default_timeout=10).run()
@@ -83,3 +85,67 @@ class RagUiTests(unittest.TestCase):
             result_button = next(b for b in app.button if b.key == 'result_' + SECOND.rcept_no)
             result_button.click().run()
             self.assertEqual(app.session_state['chosen_receipt'], SECOND.rcept_no)
+
+    def test_analysis_is_separate_cached_and_restored_without_rerunning_during_chat(self):
+        from dart_insight.rag.prompts.answer import ANALYSIS_QUESTION
+        app = AppTest.from_file(APP, default_timeout=10).run()
+        app.button(key='run_analysis').click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(len(app.chat_message), 0)
+        self.assertEqual(app.session_state['histories'][FIRST.rcept_no], [])
+        first_analysis = app.session_state['analyses'][FIRST.rcept_no].copy()
+        app.chat_input[0].set_value('후속 질문').run()
+        self.assertEqual(app.session_state['analyses'][FIRST.rcept_no], first_analysis)
+        self.assertEqual(len(app.chat_message), 2)
+        self.assertEqual(sum(call.args[1] == ANALYSIS_QUESTION for call in self.service.ask.call_args_list), 1)
+        count = self.service.ask.call_count
+        app.selectbox(key='chosen_receipt').select(SECOND.rcept_no).run()
+        self.assertEqual(len(app.chat_message), 0)
+        self.assertNotIn(SECOND.rcept_no, app.session_state['analyses'])
+        app.selectbox(key='chosen_receipt').select(FIRST.rcept_no).run()
+        self.assertEqual(app.session_state['analyses'][FIRST.rcept_no], first_analysis)
+        self.assertEqual(len(app.chat_message), 2)
+        self.assertEqual(self.service.ask.call_count, count)
+
+    def test_duplicate_source_link_is_shown_once_with_both_chunk_numbers(self):
+        def answer(selected, question, progress):
+            result = self.answer(selected, question, progress)
+            first = {**result['citations'][0], 'number': 2, 'id': 'doc:chunk2', 'source_type': 'opendart_document'}
+            second = {**first, 'number': 3, 'id': 'doc:chunk3'}
+            result['citations'] = [first, second]
+            result['answer'] = '두 주장 [근거 2] [근거 3]'
+            return result
+        self.service.ask.side_effect = answer
+        app = AppTest.from_file(APP, default_timeout=10).run()
+        app.chat_input[0].set_value('질문').run()
+        self.assertEqual(sum(m.value == FIRST.source_url for m in app.markdown), 1)
+        self.assertTrue(any('[근거 2]' in c.value for c in app.caption))
+        self.assertTrue(any('[근거 3]' in c.value for c in app.caption))
+        self.assertTrue(any('doc:chunk2' in c.value for c in app.caption))
+        self.assertTrue(any('doc:chunk3' in c.value for c in app.caption))
+
+    def test_connection_date_form_and_collection_command_use_same_dates(self):
+        from datetime import date
+        with patch('dart_insight.opendart.client.DartClient') as client:
+            api = client.return_value.__enter__.return_value
+            api.resolve_company.return_value = {'corp_code': FIRST.corp_code}
+            api.list_disclosures.return_value = []
+            app = AppTest.from_file(APP, default_timeout=10).run()
+            app.date_input[0].set_value(date(2024, 2, 1))
+            app.date_input[1].set_value(date(2025, 3, 11))
+            app.run()
+            self.assertIn('--begin 2024-02-01 --end 2025-03-11', app.code[0].value)
+            api.list_disclosures.assert_not_called()
+            app.button[0].click().run()
+            self.assertEqual(len(app.exception), 0)
+            self.assertIn('--begin 2024-02-01 --end 2025-03-11', app.code[0].value)
+            self.assertEqual(api.list_disclosures.call_args.args[1:3], (date(2024, 2, 1), date(2025, 3, 11)))
+
+    def test_year_search_explains_default_without_irrelevant_numeric_body_notice(self):
+        with patch('dart_insight.services.discovery.discover', return_value=[]):
+            app = AppTest.from_file(APP, default_timeout=10).run()
+            app.text_area[0].set_value('삼성전자 2035년 사업보고서')
+            app.button[2].click().run()
+            self.assertTrue(any('제출연도' in c.value for c in app.caption))
+            self.assertTrue(any('조건에 맞는 결과가 없습니다' in i.value for i in app.info))
+            self.assertFalse(any('본문 수치' in i.value for i in app.info))

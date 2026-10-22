@@ -8,3 +8,34 @@ def save_turn(histories, receipt, question, result):
         {'role': 'user', 'content': question},
         {'role': 'assistant', 'content': result['answer'], 'citations': result['citations'],
          'audit': result.get('audit', {})}])
+
+
+def group_citations(citations):
+    """One source link, retaining every actually cited chunk number and type."""
+    groups = {}
+    for citation in citations:
+        source = citation['source']
+        group = groups.setdefault(source, {'source': source, 'titles': [], 'citations': []})
+        if citation['title'] not in group['titles']:
+            group['titles'].append(citation['title'])
+        if not any(c['number'] == citation['number'] for c in group['citations']):
+            group['citations'].append(citation)
+    return list(groups.values())
+
+
+def separate_legacy_analysis(histories, analyses, analysis_question):
+    """Migrate prior in-session automatic-analysis turns without discarding chat."""
+    for receipt, turns in histories.items():
+        kept, latest, index = [], None, 0
+        while index < len(turns):
+            turn = turns[index]
+            if (turn.get('role') == 'user' and turn.get('content') == analysis_question and
+                    index + 1 < len(turns) and turns[index + 1].get('role') == 'assistant'):
+                latest = turns[index + 1]
+                index += 2
+            else:
+                kept.append(turn)
+                index += 1
+        if latest is not None:
+            analyses.setdefault(receipt, latest)
+            histories[receipt] = kept

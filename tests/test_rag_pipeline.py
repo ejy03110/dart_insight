@@ -192,7 +192,9 @@ class DiscoveryTests(unittest.TestCase):
                               {'metadata': {'rcept_no': '20250101000002', 'report_nm': '감사보고서'}}]
         llm = Mock()
         llm.json.side_effect = lambda prompt, data, validate: validate({'selected_ids': [ITEM]})
-        result = discover(Mock(), '사업보고서만', Mock(), Settings(), llm)
+        collection = Mock()
+        collection.count.return_value = 0
+        result = discover(collection, '사업보고서만', Mock(), Settings(), llm)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['metadata']['rcept_no'], ITEM)
         self.assertIn('확인 불가능', llm.json.call_args.args[0])

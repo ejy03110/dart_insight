@@ -1,9 +1,13 @@
 """OpenDART original ZIP/XML collection and an explicit offline document bundle."""
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
+import codecs
+from html.entities import name2codepoint
 import json
 from pathlib import Path
 import re
+from uuid import uuid4
+import zlib
 from zipfile import ZipFile, BadZipFile
 
 from defusedxml import ElementTree
@@ -21,43 +25,127 @@ def selected_candidate(selected):
                              selected.source_url, selected.corp_code)
 
 
-def parse_document_zip(content):
+def _decode_xml(raw):
+    # Honor BOMs before testing ASCII-compatible declarations (UTF-16 often decoded
+    # as UTF-8 with NULs by the previous implementation).
+    for bom, encoding in ((b'\xff\xfe\x00\x00', 'utf-32'), (b'\x00\x00\xfe\xff', 'utf-32'),
+                          (b'\xff\xfe', 'utf-16'), (b'\xfe\xff', 'utf-16')):
+        if raw.startswith(bom):
+            return raw.decode(encoding), encoding
+    declaration = re.match(br'\s*<\?xml[^>]*encoding=[\"\']([^\"\']+)', raw[:300], re.I)
+    encodings = ['utf-8-sig', 'euc-kr', 'cp949']
+    if declaration:
+        try:
+            declared = codecs.lookup(declaration[1].decode('ascii')).name
+        except (LookupError, UnicodeError):
+            raise UnicodeError() from None
+        if declared not in ('utf-8', 'euc_kr', 'cp949', 'utf-16', 'utf-16-le', 'utf-16-be',
+                            'utf-32', 'utf-32-le', 'utf-32-be', 'ascii'):
+            raise UnicodeError()
+        encodings.insert(0, declared)
+    for encoding in dict.fromkeys(encodings):
+        try:
+            return raw.decode(encoding), encoding
+        except UnicodeError:
+            continue
+    raise UnicodeError()
+
+
+def _xml_text(raw, diagnostic):
+    decoded, encoding = _decode_xml(raw)
+    diagnostic['encoding'] = encoding
+    decoded = re.sub(r'^\ufeff?\s*<\?xml[^>]*\?>', '', decoded, count=1)
+    # Reject entity declarations BEFORE normalization: never resolve local files,
+    # remote DTDs, or an internal expansion payload. External DTD references alone
+    # remain inert with defusedxml; they are never fetched.
+    fragments = re.split(r'(<!\[CDATA\[.*?\]\]>|<!--.*?-->)', decoded, flags=re.S)
+    if any(re.search(r'<!ENTITY\b', part, re.I) for part in fragments
+           if not part.startswith(('<![CDATA[', '<!--'))):
+        raise DartError('XML 엔티티 선언은 안전상 허용하지 않습니다.', 'document_entity')
+    counts = {'named_entities': 0, 'bare_ampersands': 0}
+
+    def replace_entity(match):
+        name = match[1]
+        if name in ('amp', 'lt', 'gt', 'quot', 'apos'):
+            return match[0]
+        code = {'cr': 13, 'lf': 10}.get(name, name2codepoint.get(name))
+        if code is None:
+            return match[0]  # Unknown entities must still fail strict parsing.
+        counts['named_entities'] += 1
+        return f'&#{code};'
+
+    normalized = []
+    for part in fragments:
+        if not part.startswith(('<![CDATA[', '<!--')):
+            part = re.sub(r'&([A-Za-z][A-Za-z0-9]*);', replace_entity, part)
+            part, count = re.subn(r'&(?!\#(?:[0-9]+|x[0-9a-fA-F]+);|[A-Za-z_:][\w.:-]*;)', '&amp;', part)
+            counts['bare_ampersands'] += count
+        normalized.append(part)
+    decoded = ''.join(normalized)
+    diagnostic['normalizations'] = counts
+    root = ElementTree.fromstring(decoded)
+    return '\n'.join(t.strip() for t in root.itertext() if t.strip())
+
+
+def parse_document_zip(content, *, diagnostics=None):
+    """Bounded in-memory ZIP reading and strict XML after narrow entity repair.
+
+    diagnostics contains only member numbers, sizes, encoding, repair counts and
+    curated errors. It never contains document text or raw provider exceptions.
+    """
+    if len(content) > MAX_BYTES:
+        raise DartError('공시 ZIP 다운로드 크기가 100 MiB 제한을 초과했습니다.', 'document_size')
     if not content.startswith(b'PK'):
         try:
             root = ElementTree.fromstring(content)
             check_status({"status": root.findtext("status")})
         except (ElementTree.ParseError, DefusedXmlException):
-            raise DartError("공시 원문 응답이 ZIP/XML 형식이 아닙니다.", "response") from None
-        raise DartError("공시 원문 ZIP 파일이 없습니다.", "response")
+            raise DartError('공시 원문 응답이 ZIP 또는 OpenDART 상태 XML이 아닙니다.', 'document_format') from None
+        raise DartError('공시 원문 ZIP 파일이 없습니다.', 'document_format')
     try:
         with ZipFile(BytesIO(content)) as archive:
             files = [i for i in archive.infolist() if not i.is_dir() and i.filename.lower().endswith('.xml')]
-            if not files or len(files) > 1000 or sum(i.file_size for i in files) > MAX_BYTES:
-                raise ValueError()
-            parts = []
-            for info in sorted(files, key=lambda i: i.filename):
-                raw = archive.read(info)
-                # Decode legacy Korean XML before parsing (Expat does not accept all encodings).
-                decoded = None
-                for encoding in ('utf-8-sig', 'euc-kr', 'cp949'):
-                    try:
-                        decoded = raw.decode(encoding)
-                        break
-                    except UnicodeDecodeError:
-                        continue
-                if decoded is None:
-                    raise ValueError()
-                decoded = re.sub(r'^\s*<\?xml[^>]*\?>', '', decoded, count=1)
-                root = ElementTree.fromstring(decoded)
-                text = '\n'.join(t.strip() for t in root.itertext() if t.strip())
+            if not files:
+                raise DartError('공시 ZIP에 XML 파일이 없습니다.', 'document_no_xml')
+            if len(files) > 1000:
+                raise DartError('공시 ZIP의 XML 파일 수가 1,000개 제한을 초과했습니다.', 'document_size')
+            if sum(i.file_size for i in files) > MAX_BYTES:
+                raise DartError('공시 ZIP의 XML 압축 해제 크기가 100 MiB 제한을 초과했습니다.', 'document_size')
+            parts, total = [], 0
+            for number, info in enumerate(sorted(files, key=lambda i: i.filename), 1):
+                diagnostic = {'xml_number': number, 'uncompressed_bytes': info.file_size}
+                if diagnostics is not None:
+                    diagnostics.append(diagnostic)
+                # Never extract paths; enforce the actual streamed size as well as headers.
+                with archive.open(info) as stream:
+                    raw = stream.read(MAX_BYTES - total + 1)
+                total += len(raw)
+                if total > MAX_BYTES:
+                    raise DartError('공시 XML의 실제 압축 해제 크기가 100 MiB 제한을 초과했습니다.', 'document_size')
+                try:
+                    text = _xml_text(raw, diagnostic)
+                except UnicodeError:
+                    diagnostic['error'] = 'unsupported_encoding'
+                    raise DartError(f'공시 XML #{number}: 문자 인코딩을 해석할 수 없습니다.', 'document_encoding') from None
+                except (ElementTree.ParseError, DefusedXmlException) as exc:
+                    line, column = getattr(exc, 'position', (0, 0))
+                    kind = '정의되지 않은 XML 엔티티' if 'undefined entity' in str(exc) else 'XML 구문 오류'
+                    diagnostic.update(error='xml_syntax', line=line, column=column)
+                    raise DartError(f'공시 XML #{number}: {kind} (행 {line}, 열 {column}). '
+                                    '원문 ZIP을 보존해 로컬 진단 명령으로 확인해 주세요.', 'document_xml') from None
+                diagnostic['text_characters'] = len(text)
                 if text:
                     parts.append(text)
             text = '\n\n'.join(parts)
             if not text.strip():
-                raise ValueError()
+                raise DartError('공시 ZIP의 XML에 추출 가능한 본문이 없습니다.', 'document_empty')
             return text
-    except (BadZipFile, KeyError, ValueError, RuntimeError, OSError, ElementTree.ParseError, DefusedXmlException):
-        raise DartError("공시 원문 ZIP/XML 해석 실패: 손상·빈 본문·허용 크기를 확인해 주세요.", "response") from None
+    except DartError:
+        raise
+    except BadZipFile:
+        raise DartError('공시 ZIP이 손상되었거나 CRC 검증에 실패했습니다.', 'document_zip') from None
+    except (RuntimeError, NotImplementedError, OSError, EOFError, zlib.error):
+        raise DartError('공시 ZIP 읽기 실패: 암호화·압축 방식·파일 손상을 확인해 주세요.', 'document_zip') from None
 
 
 class OpenDartSource:
@@ -102,9 +190,22 @@ class OpenDartSource:
         response = self.client._request('document.xml', {'rcept_no': candidate.document_rcept_no})
         try:
             content = response.content
-            if len(content) > MAX_BYTES:
-                raise DartError("공시 원문 다운로드 허용 크기를 초과했습니다.", "response")
-            text = parse_document_zip(content)
+            try:
+                text = parse_document_zip(content)
+            except DartError as exc:
+                # Preserve only bounded ZIP bytes, never an authenticated URL or
+                # a raw error response. Existing files/data are never replaced.
+                if content.startswith(b'PK') and len(content) <= MAX_BYTES:
+                    name = f'document-{candidate.document_rcept_no}-{uuid4().hex}.zip'
+                    try:
+                        directory = self.settings.data_dir / 'diagnostics'
+                        directory.mkdir(parents=True, exist_ok=True)
+                        with (directory / name).open('xb') as stream:
+                            stream.write(content)
+                    except OSError:
+                        raise DartError(f'{exc} 진단 ZIP 저장에 실패했습니다. 데이터 경로 권한을 확인하세요.', exc.code) from None
+                    raise DartError(f'{exc} 진단 ZIP: DART_DATA_DIR/diagnostics/{name}', exc.code) from None
+                raise
         finally:
             response.close()
         return CollectedDocument(**candidate.to_dict(), text=text,

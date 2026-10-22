@@ -37,7 +37,7 @@ if (!(Test-Path .env)) { Copy-Item .env.example .env }
 
 1. 사이드바의 메타데이터 색인 건수와 기업을 확인하고 개별 공시를 선택합니다.
 2. 질문을 입력하면 검색어 생성 → 외부 출처/내부 후보 검색 → LLM 선별 → 원문 수집 → 청킹·색인 → LangGraph `retrieve → generate` → 인용 출처가 이어집니다.
-3. '공시 핵심 내용 및 위험 요인 분석' 버튼도 같은 근거 파이프라인을 사용합니다.
+3. '공시 핵심 분석 실행' 버튼은 같은 근거 파이프라인을 사용하되 결과를 별도 영역에 저장합니다. 후속 질문은 '공시 관련 추가 질문' 채팅에만 저장하며 분석을 다시 실행하지 않습니다.
 4. 자연어 조건 검색은 메타데이터 후보 중 LLM이 조건을 확인한 공시만 제시합니다. 결과 버튼을 누르면 그 공시 채팅으로 이동합니다. 본문 수치처럼 메타데이터에 없는 조건은 추측해 통과시키지 않도록 프롬프트로 제한합니다. 실제 LLM의 조건 준수·답변 품질은 실검증이 필요합니다.
 5. 대화는 브라우저 세션 안에서 `rcept_no`별로 유지합니다. 서버 재시작 이후의 대화 영구 저장 기능은 포함하지 않습니다.
 
@@ -98,6 +98,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m unittest discover -s
 
 필요 도메인은 설치 시 PyPI/PyTorch, 실제 수집 시 `opendart.fss.or.kr`, 원문 링크 `dart.fss.or.kr`, LLM `gms.ssafy.io`, 최초 모델 다운로드 시 `huggingface.co` 및 배포 CDN입니다. 이번 클라우드는 키 미설정·일부 목적지 프록시 403으로 **실제 1,065건 E2E·모델 추론은 미검증**입니다. 환경 초안 저장과 게시·런타임 반영은 별개입니다.
 
+- [Windows E2E Q-01~Q-08 수정·사업보고서 ZIP 진단·재검증](docs/e2e-fixes.md)
 - [공식 PDF 대조표·설계·실검증 체크리스트](docs/required-integration.md)
 - [최신 진행 현황](docs/progress.md), [검증 기록](docs/validation.md)
 - [F2001 수집](docs/f2001.md), [F2002 색인](docs/f2002.md), [기존 F2004 브랜치](docs/f2004.md)
