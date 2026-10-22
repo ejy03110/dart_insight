@@ -228,9 +228,8 @@ with st.container(border=True, key='disclosure_analysis'):
 
 with st.container(key='disclosure_chat'):
     st.subheader('공시 관련 추가 질문')
-    with st.container(height=450, key='followup_messages', autoscroll=True):
-        for turn in history_for(histories, receipt):
-            render_turn(turn)
+    for turn in history_for(histories, receipt):
+        render_turn(turn)
     question = st.chat_input('선택 공시에 대해 추가 질문하세요', key='followup_question')
     if question:
         result = run_question(question, history=[dict(turn) for turn in history_for(histories, receipt)])
