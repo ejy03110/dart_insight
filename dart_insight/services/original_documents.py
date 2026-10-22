@@ -43,7 +43,8 @@ def _decode_xml(raw):
         if declared not in ('utf-8', 'euc_kr', 'cp949', 'utf-16', 'utf-16-le', 'utf-16-be',
                             'utf-32', 'utf-32-le', 'utf-32-be', 'ascii'):
             raise UnicodeError()
-        encodings.insert(0, declared)
+        # An explicit XML charset is authoritative; fallback could silently reinterpret corrupt bytes.
+        encodings = [declared]
     for encoding in dict.fromkeys(encodings):
         try:
             return raw.decode(encoding), encoding
@@ -55,7 +56,15 @@ def _decode_xml(raw):
 def _xml_text(raw, diagnostic):
     decoded, encoding = _decode_xml(raw)
     diagnostic['encoding'] = encoding
-    decoded = re.sub(r'^\ufeff?\s*<\?xml[^>]*\?>', '', decoded, count=1)
+    invalid = re.search(r'[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]', decoded)
+    if invalid:
+        offset = invalid.start()
+        diagnostic.update(error='invalid_xml_character', line=decoded.count('\n', 0, offset) + 1,
+                          column=offset - decoded.rfind('\n', 0, offset) - 1,
+                          codepoint=f'U+{ord(invalid[0]):04X}')
+        raise DartError(f"XML에 허용되지 않는 문자 {diagnostic['codepoint']} (행 {diagnostic['line']}, 열 {diagnostic['column']})가 있습니다. 본문 삭제 없이 처리를 중단합니다.", 'document_control')
+    decoded = re.sub(r'^\ufeff?\s*<\?xml\s[^>]*\?>',
+                     lambda m: re.sub(r'[^\r\n]', ' ', m[0]), decoded, count=1)
     # Reject entity declarations BEFORE normalization: never resolve local files,
     # remote DTDs, or an internal expansion payload. External DTD references alone
     # remain inert with defusedxml; they are never fetched.
@@ -95,6 +104,16 @@ def _xml_text(raw, diagnostic):
         counts['bare_ampersands'] += count
         return part
 
+    first_tag = next((m[0] for m in tokens.finditer(decoded)
+                      if not m[0].startswith(('<!--', '<![CDATA[', '<?', '<!'))), '')
+    is_html = bool(re.match(r'<html(?=[\s/>])', first_tag, re.I))
+    diagnostic['input_format'] = 'html' if is_html else 'xml'
+    diagnostic['html_void_repairs'] = 0
+    void_tags = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+                 'link', 'meta', 'param', 'source', 'track', 'wbr'}
+    # An XML-valid explicit closing form is preserved, never guessed away.
+    explicit_closings = {closing[1].lower() for m in tokens.finditer(decoded)
+                         if (closing := re.fullmatch(r'</([A-Za-z]+)\s*>', m[0]))} if is_html else set()
     normalized, position = [], 0
     for match in tokens.finditer(decoded):
         normalized.append(entities(decoded[position:match.start()]))
@@ -102,6 +121,13 @@ def _xml_text(raw, diagnostic):
         if token.startswith(('<!--', '<![CDATA[', '<?', '<!')):
             normalized.append(token)
         else:
+            opening = re.match(r'<([A-Za-z]+)(?=[\s/>])', token)
+            if (is_html and opening and opening[1].lower() in void_tags
+                    and opening[1].lower() not in explicit_closings
+                    and valid_tag.fullmatch(token) and not token.endswith('/>')):
+                # HTML void elements have no content; close only their syntax.
+                token = token[:-1] + '/>'
+                diagnostic['html_void_repairs'] += 1
             label = token[1:-1]
             # Only invalid opening tokens with Korean prose and no attribute or
             # closing-tag syntax qualify. Paired/custom tags stay structural;
@@ -118,7 +144,31 @@ def _xml_text(raw, diagnostic):
     diagnostic['literal_title_repairs'] = len(repairs)
     diagnostic['repair_examples'] = ['<' + label + '>' for label in repairs[:5]]
     root = ElementTree.fromstring(decoded)
-    return '\n'.join(t.strip() for t in root.itertext() if t.strip())
+    if not is_html:
+        return '\n'.join(t.strip() for t in root.itertext() if t.strip())
+    local = lambda element: element.tag.rsplit('}', 1)[-1].lower()
+    bodies = [node for node in root if local(node) == 'body']
+    if len(bodies) != 1:
+        raise DartError('HTML 형식 공시에 단일 body가 없습니다. 부분 추출 결과는 사용하지 않습니다.', 'document_html')
+    hidden = {'head', 'style', 'script'}
+    diagnostic['excluded_noncontent_elements'] = sum(local(node) in hidden for node in root.iter())
+    def visible(node):
+        # Iterative traversal also supports deeply nested but structurally valid reports.
+        stack = [(node, False)]
+        while stack:
+            current, tail = stack.pop()
+            if tail:
+                if current.tail:
+                    yield current.tail
+                continue
+            if local(current) in hidden:
+                continue
+            if current.text:
+                yield current.text
+            for child in reversed(current):
+                stack.append((child, True))
+                stack.append((child, False))
+    return '\n'.join(t.strip() for t in visible(bodies[0]) if t.strip())
 
 
 def parse_document_zip(content, *, diagnostics=None):
@@ -171,11 +221,14 @@ def parse_document_zip(content, *, diagnostics=None):
                     continue
                 except DartError as exc:
                     diagnostic['error'] = exc.code
-                    failures.append(exc)
+                    failures.append(DartError(f'공시 XML #{number}: {exc}', exc.code))
                     continue
                 diagnostic['text_characters'] = len(text)
                 if text:
                     parts.append(text)
+                else:
+                    diagnostic['error'] = 'empty_body'
+                    failures.append(DartError(f'공시 XML #{number}: 본문이 비어 있습니다. 부분 추출 결과는 사용하지 않습니다.', 'document_empty'))
             if failures:
                 raise DartError(f'{len(files)}개 XML 검사 중 {len(failures)}개 오류. 부분 추출 결과는 사용하지 않습니다. '
                                 f'{failures[0]}', failures[0].code)
@@ -202,25 +255,28 @@ class OpenDartSource:
         self.client = client or DartClient(settings)
         self.owned = client is None
         self.settings = settings
-        self.rows = None
+        self.rows = {}
 
     def close(self):
         if self.owned:
             self.client.close()
 
     def search(self, query, selected):
-        if self.rows is None:
-            end = date.fromisoformat(selected.rcept_dt)
-            begin = end - timedelta(days=self.settings.document_search_days)
+        end = date.fromisoformat(selected.rcept_dt)
+        begin = end - timedelta(days=self.settings.document_search_days)
+        key = (selected.corp_code, begin, end)
+        if key not in self.rows:
             rows = {}
             for category in DISCLOSURE_TYPES:
                 for row in self.client.list_disclosures(selected.corp_code, begin, end,
                                                          disclosure_type=category, max_pages=None):
+                    if row.corp_code != selected.corp_code:
+                        raise DartError('공시 검색 결과의 기업 식별자가 선택 기업과 다릅니다.', 'document_identity')
                     rows[row.rcept_no] = row
-            self.rows = list(rows.values())
+            self.rows[key] = list(rows.values())
         terms = [t.casefold() for t in re.findall(r'[가-힣A-Za-z0-9]+', query) if len(t) >= 2]
         scored = []
-        for row in self.rows:
+        for row in self.rows[key]:
             score = sum(t in row.report_nm.casefold() or t == row.rcept_no for t in terms)
             if score:
                 scored.append((score, row))
@@ -266,8 +322,10 @@ class OpenDartSource:
                                      f"XML #{d['xml_number']}: 제목형 꺾쇠 텍스트 {d['literal_title_repairs']}건 문자 보존 복구. "
                                      f"앰퍼샌드 {d['normalizations']['bare_ampersands']}건, "
                                      f"HTML 엔티티 {d['normalizations']['named_entities']}건 보정. "
+                                     f"HTML 빈 요소 {d.get('html_void_repairs', 0)}건 구조 보정. "
+                                     f"HTML 비본문(head/style/script) 요소 {d.get('excluded_noncontent_elements', 0)}개 제외. "
                                      f"이 보정으로 삭제한 본문·생략한 XML 없음. 예: {', '.join(d['repair_examples'])}"
-                                     for d in diagnostics if d.get('literal_title_repairs') or any(d.get('normalizations', {}).values())))
+                                     for d in diagnostics if d.get('literal_title_repairs') or any(d.get('normalizations', {}).values()) or d.get('input_format') == 'html'))
 
 
 class BundleSource:

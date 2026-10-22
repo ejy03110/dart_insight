@@ -179,3 +179,17 @@ class RagUiTests(unittest.TestCase):
         app.run()
         self.assertEqual(self.service.ask.call_count, calls)
         self.assertTrue(any('원래 질문' in w.value for w in app.warning))
+
+    def test_failed_stage_is_visible_and_previous_analysis_survives(self):
+        from dart_insight.opendart.client import DartError
+        app = AppTest.from_file(APP, default_timeout=10).run()
+        app.button(key='run_analysis').click().run()
+        previous = dict(app.session_state['analyses'][FIRST.rcept_no])
+        def fail(selected, question, progress):
+            progress('XML 처리 중')
+            raise DartError('공시 XML #1: 안전한 구문 오류 안내', 'document_xml')
+        self.service.ask.side_effect = fail
+        app.button(key='run_analysis').click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any('실패 단계: XML 처리 중' in e.value for e in app.error))
+        self.assertEqual(app.session_state['analyses'][FIRST.rcept_no], previous)

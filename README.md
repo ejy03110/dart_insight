@@ -106,3 +106,5 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m unittest discover -s
 - [출처와 이용 조건](docs/sources.md)
 
 Q-11/Q-12 계측·GMS 오류 분류와 무료 배포 준비: [cloud-readiness.md](docs/cloud-readiness.md). 실제 무료 배포 가능 여부와 API/Windows 검증 범위는 이 문서를 확인하세요.
+
+실제 진단 ZIP 및 기업·공시 전환 통합 검증: [integrated-stability.md](docs/integrated-stability.md).

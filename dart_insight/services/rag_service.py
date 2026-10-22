@@ -4,6 +4,7 @@ from dart_insight.diagnostics import measure, logger
 
 from dart_insight.data.collection_ledger import normalize_query
 from dart_insight.data.documents import DocumentCandidate
+from dart_insight.opendart.client import DartError
 from dart_insight.rag.pipeline import build_graph
 from dart_insight.rag.query_extraction import QueryExtractionError
 from dart_insight.rag.prompts.selection import SELECTION_PROMPT, selected_ids
@@ -80,6 +81,8 @@ class RagService:
                 docs = []
                 for candidate_data in plan['candidates']:
                     candidate = DocumentCandidate(**candidate_data)
+                    if candidate.item_rcept_no != selected.rcept_no or candidate.corp_code != selected.corp_code:
+                        raise DartError('문서 후보의 공시·기업 식별자가 선택 항목과 일치하지 않습니다.', 'document_identity')
                     if candidate.document_rcept_no not in chosen:
                         continue
                     doc = cached_docs.get(candidate.document_rcept_no)
@@ -91,8 +94,10 @@ class RagService:
                             self.source.set_progress(progress)
                         with measure('document_collection'):
                             doc = self.source.collect(candidate)
-                        if doc.item_rcept_no != selected.rcept_no or doc.document_rcept_no != candidate.document_rcept_no:
-                            raise ValueError('수집한 공시 원문의 식별자가 일치하지 않습니다.')
+                    if (doc.item_rcept_no != selected.rcept_no or doc.document_rcept_no != candidate.document_rcept_no
+                            or doc.corp_code != candidate.corp_code):
+                        raise DartError('수집한 공시 원문의 식별자가 일치하지 않습니다.', 'document_identity')
+                    if not reused:
                         self.ledger.save_document(doc)
                         cached_docs[candidate.document_rcept_no] = doc
                     logger.info('stage=document_reuse reused=%s', reused)
@@ -103,6 +108,8 @@ class RagService:
                 row = self.ledger.get(selected.rcept_no, record_query)
             progress('임베딩 및 색인 중')
             # Verify even indexed records: settings/DB changes must not trust a stale ledger flag.
+            if any(d.item_rcept_no != selected.rcept_no or d.corp_code != selected.corp_code for d in row.documents):
+                raise DartError('저장된 원문의 공시·기업 식별자가 선택 항목과 다릅니다. 기존 데이터는 보존합니다.', 'document_identity')
             pending_docs = [d for d in row.documents if d.document_rcept_no not in verified_documents]
             if pending_docs:
                 with measure('index_and_verify', documents=len(pending_docs)):

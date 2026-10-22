@@ -1,5 +1,20 @@
 # 실행 검증 기록
 
+## 실제 ZIP 및 다중 기업 파이프라인 통합 안정화 (2026-10-22 UTC)
+
+- 첨부 실제 20251203800556 ZIP 접근·해시 확인·73행 3열 재현. .xml 멤버 안의 UTF-8 HTML meta/br 빈 요소가 원인.
+  HTML 루트에서만 표준 빈 요소 문법 보정 후 전체 strict parse. 실제 14개 보정, 표시 본문 1505자 추출.
+  독립 HTMLParser의 전체 표시 텍스트와 일치, head/style 비본문만 명시적으로 제외. 실제 ZIP fixture 추가.
+- 캐시의 기업/기간 분리, 빈 XML 멤버 부분 성공 방지, 명시 charset 실패 후 재해석 금지,
+  불법 제어문자 위치 진단, 깊은 HTML 반복 순회, 후보/원문/저장 문서의 기업·항목 검사, UI 실패 단계 표시.
+- 전체 **176개 통과 / 실패 0 / skip 0**, 20.130초(기존 165 + 신규 10), pip check 정상.
+  실제 첨부 ZIP→파서→임시 SQLite/Chroma→LangGraph→GMS 클라이언트/검증까지 통합 시험.
+  같은 인스턴스의 3기업/유형 fixture 전환·재사용·손상 ZIP 재시도·허위 인용 거절·인증 복구·이전 색인 보존 확인.
+- 실제 원문 ZIP만 실제 데이터이며 외부 OpenDART/GMS HTTP와 BGE는 Mock/테스트 구현.
+  실제 API/Windows/사용자 1065건 DB/삼성전자 전체 ZIP은 미검증. 모델·스키마·기존 데이터 삭제/변경 없음.
+- 전체 근거·한계·Windows 재검증: [integrated-stability.md](integrated-stability.md).
+
+
 ## GMS 전체 호출 경로 통합 안정화 (2026-10-22 UTC)
 
 - 검색어 추출/후보 선별/답변 생성의 HTTP 처리를 작은 공통 post_chat 함수로 통합.

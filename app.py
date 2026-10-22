@@ -154,7 +154,7 @@ def render_result(result):
         st.warning('검색어 추출에 실패하여 원래 질문으로 검색했습니다. 최종 답변은 기존 근거 검증을 통과한 결과입니다.')
     notes = result.get('audit', {}).get('parse_notes', [])
     if notes:
-        st.warning('원문 XML의 제목 표기·문자 엔티티를 문자 보존 방식으로 보정했습니다. 아래 보정 내역을 확인하세요.')
+        st.warning('원문의 제목 표기·문자 엔티티·HTML 구조 처리 내역을 아래에서 확인하세요.')
         with st.expander('XML 보정 내역'):
             for note in notes:
                 st.text(note)
@@ -191,9 +191,12 @@ def run_question(question):
         st.error('DART_API_KEY 또는 실제 DOCUMENT_BUNDLE 설정이 필요합니다.')
         return None
     st.caption(f'선택 공시 1건과 관련 원문을 처리합니다. 임베딩 모델: {settings.embedding_model}, 장치: {settings.embedding_device}')
+    last_stage = '문서 수집 준비'
     try:
         with st.status('문서 수집 준비 중', expanded=True) as status:
             def progress(message):
+                nonlocal last_stage
+                last_stage = message
                 status.update(label=message)
                 st.write(message)
             with Runtime(settings, metadata, embeddings) as service:
@@ -201,9 +204,9 @@ def run_question(question):
             status.update(label='답변 및 근거 준비 완료', state='complete', expanded=False)
         return result
     except (ConfigurationError, DartError, LLMError, QueryExtractionError, MetadataIndexError) as exc:
-        st.error(str(exc))
+        st.error(f'실패 단계: {last_stage}. {exc}')
     except Exception:
-        st.error('처리 실패: 키·외부 API·모델 캐시·원문·DB 설정을 확인해 주세요. 저장된 자료는 보존되며 같은 질문으로 재시도할 수 있습니다.')
+        st.error(f'처리 실패 (단계: {last_stage}): 키·외부 API·모델 캐시·원문·DB 설정을 확인해 주세요. 저장된 자료는 보존되며 같은 질문으로 재시도할 수 있습니다.')
     return None
 
 
