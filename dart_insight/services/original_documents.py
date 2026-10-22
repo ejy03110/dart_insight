@@ -65,15 +65,6 @@ def _xml_text(raw, diagnostic):
     counts = {'named_entities': 0, 'bare_ampersands': 0}
     repairs = []
 
-    def literal_title(match):
-        label = match['label']
-        # Only the observed DART form: a standalone, whitespace-delimited Korean
-        # title inside P/SPAN. Never reinterpret tags, attributes or arbitrary XML.
-        if not re.search(r'[가-힣]', label) or not re.search(r'\S[ \t]+\S', label.strip()):
-            return match[0]
-        repairs.append(label[:200])
-        return match['opening'] + '&lt;' + label + '&gt;' + match['closing']
-
     def replace_entity(match):
         name = match[1]
         if name in ('amp', 'lt', 'gt', 'quot', 'apos'):
@@ -84,17 +75,43 @@ def _xml_text(raw, diagnostic):
         counts['named_entities'] += 1
         return f'&#{code};'
 
-    normalized = []
-    for part in fragments:
-        if not part.startswith(('<![CDATA[', '<!--')):
-            part = re.sub(
-                r'(?P<opening><(?P<tag>P|SPAN)(?:\s+[^<>]*?)?>[ \t]*)'
-                r'<(?P<label>[ \t]+[^<>\r\n=\"\'/]{1,300}[ \t]+)>'
-                r'(?P<closing>[ \t]*</(?P=tag)\s*>)', literal_title, part)
-            part = re.sub(r'&([A-Za-z][A-Za-z0-9]*);', replace_entity, part)
-            part, count = re.subn(r'&(?!\#(?:[0-9]+|x[0-9a-fA-F]+);|[A-Za-z_:][\w.:-]*;)', '&amp;', part)
-            counts['bare_ampersands'] += count
-        normalized.append(part)
+    # Lexical tokens protect quoted attribute values, comments, CDATA and PIs.
+    # Valid tag-shaped tokens are never reinterpreted, including Unicode names.
+    # The final strict parser remains responsible for nesting/namespaces/DTD syntax.
+    name = r"[^\s<>&/='\"!?]+"
+    attribute = name + r"\s*=\s*(?:\"[^\"]*\"|'[^']*')"
+    valid_tag = re.compile(r"</" + name + r"\s*>|<" + name +
+                           r"(?:\s+" + attribute + r")*\s*/?>")
+    tokens = re.compile(
+        r"<!\[CDATA\[.*?\]\]>|<!--.*?-->|<\?.*?\?>|"
+        r"<!DOCTYPE(?:[^>\"'\[]|\"[^\"]*\"|'[^']*'|\[[\s\S]*?\])*>|"
+        r"<(?:[^<>\"']|\"[^\"]*\"|'[^']*')*>", re.S)
+
+    def entities(part):
+        part = re.sub(r'&([A-Za-z][A-Za-z0-9]*);', replace_entity, part)
+        part, count = re.subn(
+            r'&(?!\#(?:[0-9]+|x[0-9a-fA-F]+);|[A-Za-z_:][\w.:-]*;)', '&amp;', part)
+        counts['bare_ampersands'] += count
+        return part
+
+    normalized, position = [], 0
+    for match in tokens.finditer(decoded):
+        normalized.append(entities(decoded[position:match.start()]))
+        token = match[0]
+        if token.startswith(('<!--', '<![CDATA[', '<?', '<!')):
+            normalized.append(token)
+        else:
+            label = token[1:-1]
+            # Only invalid opening tokens with Korean prose and no attribute or
+            # closing-tag syntax qualify. Paired/custom tags stay structural;
+            # malformed attributes and broken nesting must fail, never disappear.
+            if (not valid_tag.fullmatch(token) and re.search(r'[가-힣]', label)
+                    and not re.search(r"[<>=\"'/\r\n]", label)):
+                repairs.append(label[:200])
+                token = '&lt;' + label + '&gt;'
+            normalized.append(entities(token))
+        position = match.end()
+    normalized.append(entities(decoded[position:]))
     decoded = ''.join(normalized)
     diagnostic['normalizations'] = counts
     diagnostic['literal_title_repairs'] = len(repairs)
@@ -238,8 +255,10 @@ class OpenDartSource:
                                  collected_at=datetime.now(timezone.utc).isoformat(),
                                  parse_notes=tuple(
                                      f"XML #{d['xml_number']}: 제목형 꺾쇠 텍스트 {d['literal_title_repairs']}건 문자 보존 복구. "
+                                     f"앰퍼샌드 {d['normalizations']['bare_ampersands']}건, "
+                                     f"HTML 엔티티 {d['normalizations']['named_entities']}건 보정. "
                                      f"이 보정으로 삭제한 본문·생략한 XML 없음. 예: {', '.join(d['repair_examples'])}"
-                                     for d in diagnostics if d.get('literal_title_repairs')))
+                                     for d in diagnostics if d.get('literal_title_repairs') or any(d.get('normalizations', {}).values())))
 
 
 class BundleSource:

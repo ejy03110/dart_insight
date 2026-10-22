@@ -86,19 +86,49 @@ class LiteralTitleTests(unittest.TestCase):
         text = parse_document_zip(zipped([('normal.xml', '<DOC><P>정상 <SPAN>태그</SPAN></P>'
             '<P>&lt; TV 시장점유율 추이 &gt;</P><![CDATA[< CDATA 제목 >]]><!-- < 주석 제목 > --></DOC>')]))
         self.assertEqual(text, '정상\n태그\n< TV 시장점유율 추이 >\n< CDATA 제목 >')
-        for malformed in ('<P>< TABLE BORDER="1" ></P>', '<P>< /P ></P>', '<P><TABLE>표</P>',
-                          '<DOC>< 임의의 태그 ></DOC>', '<P>앞부분 < 제목 > 뒷부분</P>', '<P>< 한글태그 ></P>'):
+        for malformed in ('<P>< TABLE BORDER="1" ></P>', '<P>< /P ></P>', '<P><TABLE>표</P>', '<P><한글태그></P>'):
             with self.subTest(malformed=malformed), self.assertRaises(DartError):
                 parse_document_zip(zipped([('bad.xml', malformed)]))
+
+    def test_all_reported_patterns_across_three_xmls_preserve_complete_text(self):
+        # Actual snippets supplied by the user; surrounding document is a fixture.
+        bodies = [
+            '<P>R&D 및 S&P</P><P>< TV 시장점유율 추이 ></P>',
+            '<P><SPAN>앞부분</SPAN>< 디지털 콕핏 시장점유율 추이 ></P>',
+            '<P><이사ㆍ감사 전체의 보수현황></P>',
+        ]
+        expected = ['R&D 및 S&P\n< TV 시장점유율 추이 >',
+                    '앞부분\n< 디지털 콕핏 시장점유율 추이 >', '<이사ㆍ감사 전체의 보수현황>']
+        diagnostics = []
+        actual = parse_document_zip(zipped([
+            (f'20250311001085{suffix}.xml', '<DOCUMENT>' + body + '</DOCUMENT>')
+            for suffix, body in zip(('', '_00760', '_00761'), bodies)
+        ]), diagnostics=diagnostics)
+        self.assertEqual(actual, '\n\n'.join(expected))
+        self.assertEqual([d['literal_title_repairs'] for d in diagnostics], [1, 1, 1])
+        self.assertEqual(diagnostics[0]['normalizations']['bare_ampersands'], 2)
+        self.assertTrue(all('error' not in d for d in diagnostics))
+
+    def test_preserves_unicode_tags_attributes_entities_and_protected_sections(self):
+        raw = ('<DOC><한글태그 X="R&D > S&P">정상</한글태그>'
+               '<P>&amp; &lt; &gt; &quot; &apos; &#38; &#x26; &nbsp;</P>'
+               '<![CDATA[R&D < 제목 >]]><!-- R&D < 제목 > -->'
+               '<?instruction R&D?><P>앞 <제목 문구> 뒤</P></DOC>')
+        diagnostics = []
+        text = parse_document_zip(zipped([('a.xml', raw)]), diagnostics=diagnostics)
+        self.assertEqual(text, '정상\n& < > " \' & &\nR&D < 제목 >\n앞 <제목 문구> 뒤')
+        self.assertEqual(diagnostics[0]['normalizations']['bare_ampersands'], 2)
 
     def test_notes_survive_persistent_ledger_and_legacy_documents_still_load(self):
         candidate = DocumentCandidate('20250311001085', '20250311001085', '사업보고서 (2024.12)',
             'https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20250311001085', '00126380')
         with tempfile.TemporaryDirectory() as temp:
             client = Mock()
-            client._request.return_value.content = zipped([('main.xml', TITLE)])
+            client._request.return_value.content = zipped([('main.xml', TITLE), ('second.xml', '<P>R&D</P>')])
             doc = OpenDartSource(Settings(data_dir=Path(temp)), client).collect(candidate)
             self.assertIn('< TV 시장점유율 추이 >', doc.parse_notes[0])
+            self.assertEqual(len(doc.parse_notes), 2)
+            self.assertIn('앰퍼샌드 1건', doc.parse_notes[1])
             ledger = CollectionLedger(Path(temp) / 'ledger.sqlite3')
             ledger.ensure_pending(candidate.item_rcept_no, '제목')
             ledger.mark_collected(candidate.item_rcept_no, '제목', [doc])

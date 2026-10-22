@@ -189,7 +189,7 @@ def main(directory):
     from dart_insight.services.original_documents import OpenDartSource
     output = BytesIO()
     with ZipFile(output, 'w') as archive:
-        archive.writestr('1.xml', '<DOCUMENT><P>사업 위험: 환율 변동 위험.</P><P>< TV 시장점유율 추이 ></P></DOCUMENT>')
+        archive.writestr('1.xml', '<DOCUMENT><P>사업 위험: 환율 변동 위험.</P><P>< TV 시장점유율 추이 ></P><P>R&D 및 S&P</P><P><SPAN>본문</SPAN>< 디지털 콕핏 시장점유율 추이 ></P><P><이사ㆍ감사 전체의 보수현황></P></DOCUMENT>')
         archive.writestr('2.xml', '<DOC>테스트 전용 두 번째 XML 본문</DOC>')
         archive.writestr('3.xml', '<DOC>테스트 전용 세 번째 XML 본문</DOC>')
     client = Mock()
@@ -204,6 +204,9 @@ def main(directory):
     check.assertTrue(fixed_result['citations'])
     all_text = '\n'.join(repaired_docs.get(include=['documents'])['documents'])
     check.assertIn('< TV 시장점유율 추이 >', all_text)
+    check.assertIn('R&D 및 S&P', all_text)
+    check.assertIn('< 디지털 콕핏 시장점유율 추이 >', all_text)
+    check.assertIn('<이사ㆍ감사 전체의 보수현황>', all_text)
     check.assertIn('세 번째 XML 본문', all_text)
     original_requests = client._request.call_count
     repeated = repaired.ask(selected, '위험은 무엇인가?')

@@ -145,7 +145,7 @@ def render_result(result):
     render_copy_option(result['content'])
     notes = result.get('audit', {}).get('parse_notes', [])
     if notes:
-        st.warning('원문 XML의 제목 표기를 문자 보존 방식으로 보정했습니다. 아래 보정 내역을 확인하세요.')
+        st.warning('원문 XML의 제목 표기·문자 엔티티를 문자 보존 방식으로 보정했습니다. 아래 보정 내역을 확인하세요.')
         with st.expander('XML 보정 내역'):
             for note in notes:
                 st.text(note)
