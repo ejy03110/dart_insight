@@ -38,8 +38,12 @@ class Settings:
     document_bundle: Path | None = None
     document_search_days: int = 366
     candidate_top_k: int = 5
+    gms_max_output_tokens: int = 4096
+    embedding_batch_size: int = 4
 
     def __post_init__(self):
+        if not 256 <= self.gms_max_output_tokens <= 16384 or not 1 <= self.embedding_batch_size <= 64:
+            raise ConfigurationError("GMS_MAX_OUTPUT_TOKENS는 256~16384, EMBEDDING_BATCH_SIZE는 1~64이어야 합니다.")
         if not (0 < self.timeout_seconds <= 120):
             raise ConfigurationError("DART_TIMEOUT_SECONDS는 0 초과 120 이하여야 합니다.")
         if not (0 <= self.request_interval_seconds <= 60):
@@ -83,6 +87,8 @@ def load_settings(secrets: Mapping | None = None) -> Settings:
             db_dir=(ROOT / get("CHROMA_DB_DIR")) if get("CHROMA_DB_DIR") else None,
             document_bundle=(ROOT / get("DOCUMENT_BUNDLE")) if get("DOCUMENT_BUNDLE") else None,
             document_search_days=int(get("DOCUMENT_SEARCH_DAYS", 366)),
+            gms_max_output_tokens=int(get("GMS_MAX_OUTPUT_TOKENS", 4096)),
+            embedding_batch_size=int(get("EMBEDDING_BATCH_SIZE", 4)),
             candidate_top_k=int(get("CANDIDATE_TOP_K", 5)),
         )
     except ConfigurationError:

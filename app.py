@@ -1,5 +1,12 @@
 """Streamlit required workflow F2001-F2012. External calls require explicit UI actions."""
 from datetime import date, timedelta
+import logging
+
+operations = logging.getLogger("dart_insight.operations")
+operations.setLevel(logging.INFO)
+if not operations.handlers:
+    operations.addHandler(logging.StreamHandler())
+operations.propagate = False
 
 import streamlit as st
 

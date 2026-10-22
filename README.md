@@ -104,3 +104,5 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m unittest discover -s
 - [최신 진행 현황](docs/progress.md), [검증 기록](docs/validation.md)
 - [F2001 수집](docs/f2001.md), [F2002 색인](docs/f2002.md), [기존 F2004 브랜치](docs/f2004.md)
 - [출처와 이용 조건](docs/sources.md)
+
+Q-11/Q-12 계측·GMS 오류 분류와 무료 배포 준비: [cloud-readiness.md](docs/cloud-readiness.md). 실제 무료 배포 가능 여부와 API/Windows 검증 범위는 이 문서를 확인하세요.

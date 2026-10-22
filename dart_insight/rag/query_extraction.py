@@ -7,6 +7,8 @@ import requests
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator
 
 from dart_insight.config import ConfigurationError, Settings
+from dart_insight.diagnostics import logger, measure
+from dart_insight.rag.response import response_value, ResponseError
 from dart_insight.data.models import Disclosure
 from dart_insight.rag.prompts.query_extraction import build_messages
 
@@ -59,28 +61,38 @@ def extract_queries(disclosure: Disclosure, question: str, settings: Settings, *
             if attempt:
                 time.sleep(settings.request_interval_seconds)
             try:
-                response = client.post(
-                    GMS_CHAT_URL,
-                    headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-                    json={"model": settings.chat_model, "messages": messages,
-                          "response_format": {"type": "json_object"}},
-                    timeout=settings.timeout_seconds,
-                    allow_redirects=False,
-                )
+                with measure('gms_query_http', attempt=attempt + 1):
+                    response = client.post(
+                        GMS_CHAT_URL,
+                        headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+                        json={"model": settings.chat_model, "messages": messages,
+                              "response_format": {"type": "json_object"},
+                              "max_completion_tokens": settings.gms_max_output_tokens},
+                        timeout=settings.timeout_seconds,
+                        allow_redirects=False,
+                    )
             except requests.RequestException:
                 raise QueryExtractionError("GMS 검색어 추출 API 통신에 실패했습니다.") from None
+            logger.info('stage=gms_query_http http_status=%s attempt=%s', response.status_code, attempt + 1)
             if response.status_code != 200:
+                response.close()
                 raise QueryExtractionError("GMS 검색어 추출 API 요청에 실패했습니다. 인증·모델·한도를 확인하세요.")
             try:
-                content = response.json()["choices"][0]["message"]["content"]
-                output = parse_queries(content)
-            except (ValueError, KeyError, IndexError, TypeError):
+                with measure('gms_query_validation'):
+                    output = QueryOutput.model_validate(response_value(response)).model_dump()
+            except (ValueError, KeyError, IndexError, TypeError) as exc:
+                category = exc.category if isinstance(exc, ResponseError) else 'schema'
+                logger.warning('stage=gms_query_validation category=%s http_status=%s attempt=%s', category, response.status_code, attempt + 1)
+                if isinstance(exc, ResponseError) and category not in ('json_syntax', 'empty_content'):
+                    raise QueryExtractionError('GMS 검색어 응답 오류 [' + category + ']: 모델 응답 또는 출력 한도를 확인하세요.') from None
                 if attempt == 2:
                     raise QueryExtractionError("검색어 JSON 검증에 실패했습니다. 최대 2회 재시도를 마쳤습니다.") from None
                 # Do not echo malformed provider text (possibly sensitive) into retries.
                 messages = [*messages[:2], {"role": "user", "content":
                     '이전 출력의 JSON 검증에 실패했습니다. {"queries":["검색어"]}만 반환하세요.'}]
                 continue
+            finally:
+                response.close()
             # Keep the receipt independent of LLM compliance and semantic ranking.
             output["queries"] = list(dict.fromkeys([*output["queries"], disclosure.rcept_no]))
             return output

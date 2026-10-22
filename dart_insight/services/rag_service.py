@@ -1,5 +1,6 @@
 """F2003-F2008 orchestration with injectable external boundaries and durable resume."""
 import hashlib
+from dart_insight.diagnostics import measure, logger
 
 from dart_insight.data.collection_ledger import normalize_query
 from dart_insight.data.documents import DocumentCandidate
@@ -23,7 +24,9 @@ class RagService:
             queries = list(dict.fromkeys([*self.llm.extract(selected, question), selected.rcept_no]))
             self.ledger.question_queries(selected.rcept_no, question, queries)
         cached_docs = self.ledger.documents_for_item(selected.rcept_no)
+        logger.info('stage=document_cache reusable_documents=%s', len(cached_docs))
         audits = []
+        verified_documents = set()
         normalized_question = normalize_query(question)
         question_id = hashlib.sha256(normalized_question.encode('utf-8')).hexdigest()
         for query in queries:
@@ -69,22 +72,32 @@ class RagService:
                     candidate = DocumentCandidate(**candidate_data)
                     if candidate.document_rcept_no not in chosen:
                         continue
-                    progress('선별 공시 원문 수집 중')
                     doc = cached_docs.get(candidate.document_rcept_no)
+                    reused = doc is not None
                     if doc is None:
-                        doc = self.source.collect(candidate)
+                        progress('원문 다운로드 중')
+                        # The production source emits XML stage updates too.
+                        if hasattr(self.source, 'set_progress'):
+                            self.source.set_progress(progress)
+                        with measure('document_collection'):
+                            doc = self.source.collect(candidate)
                         if doc.item_rcept_no != selected.rcept_no or doc.document_rcept_no != candidate.document_rcept_no:
                             raise ValueError('수집한 공시 원문의 식별자가 일치하지 않습니다.')
                         self.ledger.save_document(doc)
                         cached_docs[candidate.document_rcept_no] = doc
+                    logger.info('stage=document_reuse reused=%s', reused)
                     docs.append(doc)
                 if not any(d.document_rcept_no == selected.rcept_no for d in docs):
                     raise ValueError('선택 공시 원문이 없습니다. 실제 원문을 준비해 주세요.')
                 self.ledger.mark_collected(selected.rcept_no, record_query, docs)
                 row = self.ledger.get(selected.rcept_no, record_query)
-            progress('공시 원문 청킹·색인 및 저장 검증 중')
+            progress('임베딩 및 색인 중')
             # Verify even indexed records: settings/DB changes must not trust a stale ledger flag.
-            index_documents(list(row.documents), self.documents, self.embeddings, self.settings)
+            pending_docs = [d for d in row.documents if d.document_rcept_no not in verified_documents]
+            if pending_docs:
+                with measure('index_and_verify', documents=len(pending_docs)):
+                    index_documents(pending_docs, self.documents, self.embeddings, self.settings)
+                verified_documents.update(d.document_rcept_no for d in pending_docs)
             self.ledger.mark_indexed(selected.rcept_no, record_query)
             audits.append(plan or {'query': query, 'selected_ids': [d.document_rcept_no for d in row.documents],
                                    'rejected_ids': []})
@@ -96,4 +109,5 @@ class RagService:
         graph = build_graph(lambda q: retrieve(self.metadata, self.documents, selected, q,
                                                self.embeddings, self.settings), self.llm, progress)
         result = graph.invoke({'question': question})
+        progress('완료')
         return {**result, 'audit': audit}

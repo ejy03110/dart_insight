@@ -1,6 +1,7 @@
 """F2005: stable item/document chunks, separate from metadata, BGE-only."""
 import hashlib
 import math
+from dart_insight.diagnostics import measure, logger
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -44,21 +45,25 @@ def index_documents(documents, collection, embeddings, settings):
     check_embedding_model(embeddings, settings.embedding_model)
     embedded = 0
     for doc in documents:
-        chunks = document_chunks(doc, settings)
+        with measure('chunking', characters=len(doc.text)):
+            chunks = document_chunks(doc, settings)
         scope = {'$and': [{'item_rcept_no': doc.item_rcept_no},
                           {'document_rcept_no': doc.document_rcept_no}]}
         previous = collection.get(where=scope, include=['documents', 'metadatas'])
         stored = {i: (t, m) for i, t, m in zip(previous['ids'], previous['documents'], previous['metadatas'])}
         changed = [c for c in chunks if stored.get(c['id']) != (c['text'], c['metadata'])]
-        for start in range(0, len(changed), 16):
-            batch = changed[start:start + 16]
-            vectors = embeddings.embed_documents([c['text'] for c in batch])
+        for start in range(0, len(changed), settings.embedding_batch_size):
+            batch = changed[start:start + settings.embedding_batch_size]
+            with measure('embedding', chunks=len(batch)):
+                vectors = embeddings.embed_documents([c['text'] for c in batch])
             if len(vectors) != len(batch) or any(len(v) != DIMENSION or
                     any(not isinstance(x, (float, int)) or not math.isfinite(x) for x in v) for v in vectors):
                 raise MetadataIndexError('문서 벡터의 개수·1024차원·숫자 형식을 확인해 주세요.')
-            collection.upsert(ids=[c['id'] for c in batch], documents=[c['text'] for c in batch],
-                              metadatas=[c['metadata'] for c in batch], embeddings=vectors)
+            with measure('chroma_upsert', chunks=len(batch)):
+                collection.upsert(ids=[c['id'] for c in batch], documents=[c['text'] for c in batch],
+                                  metadatas=[c['metadata'] for c in batch], embeddings=vectors)
             embedded += len(batch)
+        logger.info('stage=index_counts chunks=%s changed=%s reused=%s', len(chunks), len(changed), len(chunks)-len(changed))
         actual = collection.get(ids=[c['id'] for c in chunks], include=['documents', 'metadatas'])
         verified = {i: (t, m) for i, t, m in zip(actual['ids'], actual['documents'], actual['metadatas'])}
         if any(verified.get(c['id']) != (c['text'], c['metadata']) for c in chunks):

@@ -88,7 +88,10 @@ def main(directory):
     source, llm = Source(other), LLM()
     service = RagService(settings, metadata, docs, enc, ledger, source, llm)
     progress = []
-    result = service.ask(selected, '위험은?', progress.append)
+    from unittest.mock import patch
+    with patch('dart_insight.services.rag_service.index_documents', wraps=index_documents) as indexing:
+        result = service.ask(selected, '위험은?', progress.append)
+        check.assertEqual(indexing.call_count, 1)  # Same selected document across two queries.
     check.assertIn('[근거', result['answer'])
     check.assertEqual(result['evidence'][0].id, f'meta:{selected.rcept_no}')
     check.assertTrue(any(e.source_type == 'opendart_document' for e in result['evidence']))

@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 from uuid import uuid4
 import zlib
+from dart_insight.diagnostics import measure
 from zipfile import ZipFile, BadZipFile
 
 from defusedxml import ElementTree
@@ -228,13 +229,21 @@ class OpenDartSource:
                                   row.source_url, row.corp_code)
                 for _, row in scored[:self.settings.candidate_top_k]]
 
+    def set_progress(self, callback):
+        self.progress = callback
+
     def collect(self, candidate):
-        response = self.client._request('document.xml', {'rcept_no': candidate.document_rcept_no})
+        progress = getattr(self, 'progress', lambda _: None)
+        progress('원문 다운로드 중')
+        with measure('opendart_download'):
+            response = self.client._request('document.xml', {'rcept_no': candidate.document_rcept_no})
         try:
             content = response.content
             try:
                 diagnostics = []
-                text = parse_document_zip(content, diagnostics=diagnostics)
+                progress('XML 처리 중')
+                with measure('xml_parse', zip_bytes=len(content)):
+                    text = parse_document_zip(content, diagnostics=diagnostics)
             except DartError as exc:
                 # Preserve only bounded ZIP bytes, never an authenticated URL or
                 # a raw error response. Existing files/data are never replaced.

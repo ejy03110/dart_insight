@@ -1,5 +1,6 @@
 """F2007/F2008: actual LangGraph retrieve -> generate with citation validation."""
 import re
+from dart_insight.diagnostics import measure
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -45,11 +46,12 @@ def validate_answer(value, evidence, question=''):
 
 def build_graph(retriever, llm, progress=lambda _: None):
     def retrieve_node(state):
-        progress('질문 관련 근거 검색 중')
-        return {'evidence': retriever(state['question'])}
+        progress('관련 근거 검색 중')
+        with measure('rag_retrieval'):
+            return {'evidence': retriever(state['question'])}
 
     def generate_node(state):
-        progress('근거 기반 답변 생성 중')
+        progress('GMS 답변 생성 중')
         evidence = state['evidence']
         if not evidence:
             return {'answer': UNKNOWN, 'citations': []}
