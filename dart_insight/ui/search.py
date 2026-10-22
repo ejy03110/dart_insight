@@ -86,6 +86,15 @@ def render_search(settings,indexed,open_detail):
             st.subheader(disclosure.report_nm)
             st.caption(f'{disclosure.corp_name} · {disclosure.rcept_dt} · {disclosure.disclosure_type}')
             known=indexed.get(disclosure.rcept_no)
-            st.caption('보관된 공시 · 기존 분석 연결' if known and known.corp_code==disclosure.corp_code else '미색인 공시 · 원문 확인 가능')
+            st.caption('AI 분석 가능 · 보관된 공시 · 기존 분석 연결' if known and known.corp_code==disclosure.corp_code else '미색인 공시 · 원문 확인 가능 · AI 분석 미지원')
             st.button('공시 상세 보기',key='api_detail_'+disclosure.rcept_no,on_click=open_detail,args=(disclosure,'api'))
+            if known and known.corp_code==disclosure.corp_code:
+                from dart_insight.ui.routes import write_route
+                def open_analysis(receipt):
+                    st.session_state['chosen_receipt']=receipt
+                    st.session_state['ui_page']='공시 분석'
+                    st.session_state['ui_section']=None
+                    write_route()
+                st.button('AI 분석 열기',key='api_analyze_'+disclosure.rcept_no,
+                          on_click=open_analysis,args=(disclosure.rcept_no,))
     pagination(result)

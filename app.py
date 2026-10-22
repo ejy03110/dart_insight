@@ -159,7 +159,7 @@ if page == '홈':
 
 if page == '분석 기록':
     st.title('분석 기록')
-    st.caption('현재 접속에서 나눈 대화와 분석입니다. 접속이 종료되면 기록이 사라질 수 있습니다.')
+    st.caption('현재 세션의 기록입니다. 브라우저 새로고침이나 세션 종료 후에는 복원되지 않을 수 있습니다.')
     recorded = [d for d in disclosures if histories.get(d.rcept_no) or d.rcept_no in analyses]
     if not recorded:
         st.info('아직 분석 기록이 없습니다.')
@@ -174,6 +174,7 @@ if page == '분석 기록':
 if page == '공시 탐색':
     st.title('공시 탐색')
     st.session_state['_explore_scope']=st.session_state.get('explore_scope','보관된 공시')
+    st.caption('AI 분석을 바로 이용하려면 보관된 공시를 선택하세요. 전체 기간·최근 공시 목록에서도 AI 분석 가능 표시를 확인할 수 있습니다.')
     scope = st.radio('공시 범위', ['전체 기간 검색','보관된 공시', '최근 7일 공시'], key='_explore_scope',on_change=remember_scope)
     if scope == '전체 기간 검색':
         from dart_insight.ui.search import render_search
@@ -183,7 +184,7 @@ if page == '공시 탐색':
         from dart_insight.ui.recent import render_recent_list
         render_recent_list(settings, by_id, open_recent)
         st.stop()
-    st.caption('보관된 공시에서 찾습니다. 실시간 공시 조회 결과가 아닙니다.')
+    st.caption('AI 분석 가능한 보관 공시입니다. 실시간 공시 조회 결과가 아닙니다.')
     for name, default in [('explore_search', ''), ('explore_company', '전체'), ('explore_type', '전체')]:
         st.session_state['_' + name] = st.session_state.get(name, default)
     search = st.text_input('기업명 또는 종목코드 검색', placeholder='예: 삼성전자, 005930',
@@ -332,7 +333,7 @@ def render_result(result):
         st.write(' · '.join(group['titles']))
         for citation in group['citations']:
             label = '항목 메타데이터' if citation['source_type'] == 'opendart_metadata' else '외부 문서'
-            st.caption(f"[근거 {citation['number']}] {label}")
+            st.caption(f"[근거 {citation['number']}] {citation.get('title') or '문서명 미제공'} · {label}")
         st.write(group['source'])
         with st.expander('근거 내용 및 문서 식별 정보'):
             for citation in group['citations']:
@@ -359,15 +360,34 @@ def run_question(question, *, history=None):
         st.error('공시 원문에 연결할 수 없습니다. 관리자에게 연결 설정 확인을 요청해 주세요.')
         return None
     last_stage = 'start'
+    status = st.status('분석을 준비하고 있습니다.', expanded=True)
     try:
         with st.spinner('분석 중입니다. 잠시만 기다려 주세요.'):
             def progress(message):
                 nonlocal last_stage
-                # Stage details stay in the existing server logs, never in the UI.
+                # Only known callback events become public text; never echo raw errors.
                 last_stage = next((phase for word, phase in (('XML', 'parse'), ('검색', 'retrieve'), ('원문', 'collect'), ('색인', 'index'), ('생성', 'generate')) if word in message), 'processing')
                 operations.info('ui_phase=%s', last_stage)
+                labels = {
+                    '외부 문서 검색어 생성 중': '질문에 맞는 검색 조건을 준비하고 있습니다.',
+                    '외부 출처 및 메타데이터에서 문서 후보 검색 중': '관련 공시를 찾고 있습니다.',
+                    'LLM으로 관련 후보 문서 선별 중': '질문과 관련된 문서를 확인하고 있습니다.',
+                    '원문 다운로드 중': '공시 원문을 수집하고 있습니다.',
+                    '선별 공시 원문 수집 중': '공시 원문을 수집하고 있습니다.',
+                    'XML 처리 중': '공시 원문을 읽고 있습니다.',
+                    '임베딩 및 색인 중': '저장된 문서 색인을 확인하고 필요한 문서를 준비하고 있습니다.',
+                    '관련 근거 검색 중': '공시에서 답변 근거를 찾고 있습니다.',
+                    'GMS 답변 생성 중': '근거를 바탕으로 답변을 작성하고 있습니다.',
+                    '근거 기반 답변 생성 중': '근거를 바탕으로 답변을 작성하고 있습니다.',
+                    '이전 대화 확인 완료': '이전 대화에서 답변을 확인했습니다.',
+                }
+                if message in labels:
+                    status.write(labels[message])
+                elif message.startswith('검색어 추출 실패로'):
+                    status.write('검색 조건을 만들지 못해 원래 질문으로 검색을 계속합니다.')
             with Runtime(settings, metadata, embeddings) as service:
                 result = service.ask(selected, question, progress, history=history) if history else service.ask(selected, question, progress)
+        status.update(label='분석이 완료되었습니다.', state='complete', expanded=False)
         return result
     except (ConfigurationError, DartError, LLMError, QueryExtractionError, MetadataIndexError) as exc:
         operations.warning('ui_request_failed phase=%s exception=%s category=%s', last_stage, type(exc).__name__,
@@ -377,6 +397,7 @@ def run_question(question, *, history=None):
         # No raw exception, prompt, URL, or credential is copied into public output/logs.
         operations.error('ui_request_failed phase=%s exception=%s', last_stage, type(exc).__name__)
         st.error('처리 실패: 요청을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요. 이전 결과와 대화는 유지됩니다.')
+    status.update(label='분석을 완료하지 못했습니다.', state='error', expanded=True)
     return None
 
 
@@ -397,9 +418,9 @@ with st.container(border=True, key='disclosure_analysis'):
 
 with st.container(key='disclosure_chat'):
     st.subheader('공시 관련 추가 질문')
-    question = st.chat_input('선택 공시에 대해 추가 질문하세요', key='followup_question')
     for turn in history_for(histories, receipt):
         render_turn(turn)
+    question = st.chat_input('선택 공시에 대해 추가 질문하세요', key='followup_question')
     if question:
         result = run_question(question, history=[dict(turn) for turn in history_for(histories, receipt)])
         if result is not None:

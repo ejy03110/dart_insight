@@ -122,3 +122,16 @@ class SearchUiTests(unittest.TestCase):
         self.submit(app,company='005930')
         self.assertTrue(any('조회 조건에 해당하는 공시가 없습니다' in i.value for i in app.info))
         self.assertFalse(any(b.key=='api_next' for b in app.button))
+
+    def test_indexed_result_has_direct_analysis_action_but_never_auto_runs_rag(self):
+        client=self.build_service()
+        from dart_insight.data.models import Disclosure
+        row=api_payload({'page_no':1,'page_count':20})['list'][0]
+        known=Disclosure.from_api(row,'A','2026-10-22T00:00:00+00:00')
+        with patch('dart_insight.services.runtime.list_disclosures',return_value=[known]):
+            app=self.start();self.submit(app)
+            app.button(key='api_analyze_'+known.rcept_no).click().run()
+            self.assertEqual(app.session_state['chosen_receipt'],known.rcept_no)
+            self.assertEqual(app.session_state['ui_page'],'공시 분석')
+            self.assertTrue(any(b.key=='run_analysis' for b in app.button))
+            self.runtime.assert_not_called()

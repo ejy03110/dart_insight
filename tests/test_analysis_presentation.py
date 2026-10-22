@@ -9,7 +9,7 @@ class AnalysisPresentationTests(unittest.TestCase):
     setUp = fixture.RagUiTests.setUp
     answer = fixture.RagUiTests.answer
 
-    def test_generic_spinner_without_technical_stage_output(self):
+    def test_real_progress_without_technical_stage_output(self):
         messages = ['GMS 분석 중', 'LangGraph 실행 중', 'BGE-M3 임베딩 중', 'XML 처리 중']
         def answer(selected, question, progress, **kwargs):
             for message in messages:
@@ -19,7 +19,7 @@ class AnalysisPresentationTests(unittest.TestCase):
         app = fixture.start_analysis()
         with patch('streamlit.status', wraps=st.status) as status, patch('streamlit.spinner', wraps=st.spinner) as spinner, patch('streamlit.write', wraps=st.write) as write:
             app.button(key='run_analysis').click().run()
-            status.assert_not_called()
+            status.assert_called_once()
             self.assertTrue(any(call.args[0] == '분석 중입니다. 잠시만 기다려 주세요.' for call in spinner.call_args_list))
             for message in messages:
                 self.assertFalse(any(message in str(call.args) for call in write.call_args_list))
@@ -49,3 +49,34 @@ class AnalysisPresentationTests(unittest.TestCase):
         self.assertEqual(app.session_state['analyses'][fixture.FIRST.rcept_no],previous)
         self.assertFalse(any('test-only-sensitive-error-token' in e.value or 'GMS' in e.value for e in app.error))
         self.assertTrue(any('이전 결과와 대화는 유지' in e.value for e in app.error))
+
+    def test_progress_reports_only_emitted_stages_and_errors(self):
+        app=fixture.start_analysis()
+        def failed(selected,question,progress,**kwargs):
+            progress('원문 다운로드 중')
+            progress('XML 처리 중')
+            raise RuntimeError('secret-not-for-display')
+        self.service.ask.side_effect=failed
+        app.button(key='run_analysis').click().run()
+        self.assertEqual(app.status[0].state,'error')
+        text=' '.join(m.value for m in app.markdown)
+        self.assertIn('공시 원문을 수집',text)
+        self.assertIn('공시 원문을 읽고',text)
+        self.assertNotIn('답변을 작성',text)
+        self.assertNotIn('secret-not-for-display',text)
+
+    def test_chat_input_is_after_all_saved_turns(self):
+        app=fixture.start_analysis()
+        app.chat_input[0].set_value('첫 질문').run()
+        app.chat_input[0].set_value('두 번째 질문').run()
+        # Inspect rendered order recursively rather than merely checking state.
+        elements=list(app.main.__iter__())
+        sequence=[node.type for node in elements if node.type in ('chat_message','chat_input')]
+        self.assertEqual(sequence,['chat_message','chat_message','chat_message','chat_message','chat_input'])
+
+    def test_citation_number_displays_its_actual_document_title(self):
+        app=fixture.start_analysis()
+        app.button(key='run_analysis').click().run()
+        citations=app.session_state['analyses'][fixture.FIRST.rcept_no]['citations']
+        for citation in citations:
+            self.assertTrue(any(f"[근거 {citation['number']}] {citation['title']}" in c.value for c in app.caption))
