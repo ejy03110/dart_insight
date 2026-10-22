@@ -8,6 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from dart_insight.rag.prompts.answer import ANSWER_PROMPT
 from dart_insight.rag.conversation import recent_history, response_style
 from dart_insight.rag.validation import AnswerValidationError, object_fields
+from dart_insight.rag.claim_checks import validate_core_claims
 
 UNKNOWN = '제공된 문서에서 확인되지 않습니다.'
 
@@ -40,6 +41,7 @@ def validate_answer(value, evidence, question=''):
     remaining = re.sub(r'\[근거\s*\d+\]', '', value['answer'])
     if '[근거' in remaining:
         raise AnswerValidationError('citation', 'answer', 'citation_token_format')
+    validate_core_claims(value['answer'], evidence)
     if re.search(r'취득.*(?:원인|목적|이유)', question):
         if re.search(r'(?:목적|이유|원인)\s*[:：]\s*(?:장내매수|장외매수|시간외매수)', value['answer']):
             raise AnswerValidationError('grounding', 'answer', 'acquisition_method_is_not_purpose')

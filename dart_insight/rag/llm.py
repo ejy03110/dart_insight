@@ -90,12 +90,12 @@ class GmsClient:
                             'envelope': '모델 응답 구조가 예상과 다릅니다. 모델·게이트웨이 호환성을 확인하세요.',
                             'schema': '필수 JSON 필드·자료형 검증에 실패했습니다. 서버 로그의 field/rule을 확인하세요.',
                             'citation': '실제 검색 근거와 인용 표기가 일치하지 않습니다. 서버 로그의 rule을 확인하세요.',
-                            'grounding': '근거에 없는 취득 목적 생성 방지 규칙을 통과하지 못했습니다.',
+                            'grounding': '인용 근거에서 배정 대상·의무보유 주체·자금 목적 등 핵심 주장을 확인하지 못했습니다. 근거가 부족한 내용은 단정할 수 없습니다.',
                             'validator_internal': '검증기 내부 오류가 발생했습니다. 서버 로그의 exception/rule을 확인하세요.',
                         }.get(exc.category, '정상 JSON 답변을 받지 못했습니다. 모델 설정을 확인하세요.')
                         raise LLMError('GMS ' + operation + ' 응답 오류 [' + exc.category + ']: ' + guidance) from None
                     messages = [*messages[:2], {'role': 'user', 'content':
-                        '이전 응답의 형식 또는 근거 검증에 실패했습니다. 시스템의 JSON 스키마와 근거 번호 규칙을 정확히 지켜 전체 JSON 객체만 반환하세요.'}]
+                        '이전 응답의 형식 또는 근거 검증에 실패했습니다. 시스템의 JSON 스키마와 근거 규칙을 정확히 지켜 전체 JSON 객체만 반환하세요. 확인되지 않는 주장은 단정하지 말고 근거 부족을 안내하며, 답을 확인할 수 없으면 supported=false로 반환하세요.'}]
                     continue
                 return value
             finally:

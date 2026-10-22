@@ -1,5 +1,16 @@
 # 실행 검증 기록
 
+## RAG 핵심 주장 검증 최소 보강 (2026-10-22 UTC)
+
+- `.venv/bin/python -m unittest discover -s tests -v`: **199개 통과 / 실패 0 / skip 0**, 21.628초.
+- 신규 합성 테스트 11개: 잘못된 기존 주주 청약/배정·의무보유 주체·자금 목적 거부,
+  명시적 근거/근거 부족 통과, 잘못 연결된 인용·메타데이터·미인용 주장·상충 목적 거부,
+  실제 LangGraph + GmsClient에서 HTTP Mock 오류 재생성/안전 실패 확인.
+- 기존 실제 ZIP fixture·임시 Chroma/SQLite·LangGraph 및 UI/멀티턴 회귀 포함.
+  외부 API와 BGE는 테스트 대역. 금양 `20251224000555` 사실관계·실제 GMS·Windows는 미검증.
+- `.venv/bin/python -m pip check`: No broken requirements found. `git diff --check`: 통과.
+- 적용/미적용 주장 유형과 재검증: [core-claim-validation.md](core-claim-validation.md).
+
 ## Q-09 멀티턴·정중한 응답·본문 채팅 UI (2026-10-22 UTC)
 
 - 원인: 세션 기록은 있었지만 실제 GMS에는 전달되지 않았고 새 메시지를 입력창 뒤에 렌더링했다.
