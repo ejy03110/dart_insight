@@ -158,7 +158,9 @@ def render_result(result):
         with st.expander('XML 보정 내역'):
             for note in notes:
                 st.text(note)
-    if not result.get('citations'):
+    if result.get('audit', {}).get('answer_basis') == 'conversation':
+        st.caption('이전 대화에서 확인한 내용입니다. 새로운 공시 사실을 검증한 답변이 아닙니다.')
+    elif not result.get('citations'):
         st.info('답변에 인용된 근거가 없습니다.')
     for group in group_citations(result.get('citations', [])):
         st.write(' · '.join(group['titles']))
@@ -183,7 +185,7 @@ def render_turn(turn):
             st.markdown(turn['content'])
 
 
-def run_question(question):
+def run_question(question, *, history=None):
     if not settings.openai_api_key:
         st.error('GMS_API_KEY(기존 OPENAI_API_KEY 호환)를 설정해 주세요.')
         return None
@@ -200,7 +202,7 @@ def run_question(question):
                 status.update(label=message)
                 st.write(message)
             with Runtime(settings, metadata, embeddings) as service:
-                result = service.ask(selected, question, progress)
+                result = service.ask(selected, question, progress, history=history) if history else service.ask(selected, question, progress)
             status.update(label='답변 및 근거 준비 완료', state='complete', expanded=False)
         return result
     except (ConfigurationError, DartError, LLMError, QueryExtractionError, MetadataIndexError) as exc:
@@ -226,12 +228,12 @@ with st.container(border=True, key='disclosure_analysis'):
 
 with st.container(key='disclosure_chat'):
     st.subheader('공시 관련 추가 질문')
-    for turn in history_for(histories, receipt):
-        render_turn(turn)
+    with st.container(height=450, key='followup_messages', autoscroll=True):
+        for turn in history_for(histories, receipt):
+            render_turn(turn)
     question = st.chat_input('선택 공시에 대해 추가 질문하세요', key='followup_question')
     if question:
-        result = run_question(question)
+        result = run_question(question, history=[dict(turn) for turn in history_for(histories, receipt)])
         if result is not None:
             save_turn(histories, receipt, question, result)
-            for turn in history_for(histories, receipt)[-2:]:
-                render_turn(turn)
+            st.rerun()  # Render all saved turns before the single input widget.

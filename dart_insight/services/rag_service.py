@@ -6,6 +6,7 @@ from dart_insight.data.collection_ledger import normalize_query
 from dart_insight.data.documents import DocumentCandidate
 from dart_insight.opendart.client import DartError
 from dart_insight.rag.pipeline import build_graph
+from dart_insight.rag.conversation import recent_history, context_id, contextual_search, recall_answer, response_style
 from dart_insight.rag.query_extraction import QueryExtractionError
 from dart_insight.rag.prompts.selection import SELECTION_PROMPT, selected_ids
 from dart_insight.rag.retrieval import retrieve
@@ -19,13 +20,17 @@ class RagService:
         self.settings, self.metadata, self.documents = settings, metadata, documents
         self.embeddings, self.ledger, self.source, self.llm = embeddings, ledger, source, llm
 
-    def prepare(self, selected, question, progress=lambda _: None):
+    def prepare(self, selected, question, progress=lambda _: None, *, history=None):
+        recent = recent_history(history, selected.rcept_no)
+        scope = context_id(recent) if recent else None
+        cache_question = question + (f" [대화문맥:{scope}]" if scope else "")
         progress('외부 문서 검색어 생성 중')
-        queries = self.ledger.question_queries(selected.rcept_no, question)
+        queries = self.ledger.question_queries(selected.rcept_no, cache_question)
         query_fallback = None
         if queries is None:
             try:
-                queries = list(dict.fromkeys([*self.llm.extract(selected, question), selected.rcept_no]))
+                extracted = self.llm.extract(selected, question, history=recent) if recent else self.llm.extract(selected, question)
+                queries = list(dict.fromkeys([*extracted, selected.rcept_no]))
             except QueryExtractionError as exc:
                 query_fallback = {'category': exc.category, 'http_status': exc.status}
                 queries = list(dict.fromkeys([question.strip(), selected.rcept_no]))
@@ -33,7 +38,7 @@ class RagService:
                 logger.warning('stage=query_fallback category=%s http_status=%s', exc.category, exc.status)
                 # Retry extraction next run; fallback is not a successful LLM result.
             else:
-                self.ledger.question_queries(selected.rcept_no, question, queries)
+                self.ledger.question_queries(selected.rcept_no, cache_question, queries)
         cached_docs = self.ledger.documents_for_item(selected.rcept_no)
         logger.info('stage=document_cache reusable_documents=%s', len(cached_docs))
         audits = []
@@ -44,8 +49,8 @@ class RagService:
             search_plan = self.ledger.plan(selected.rcept_no, query)
             # Query search results are reusable; relevance selection depends on
             # the question. Keep old completed rows immutable and add a scoped row.
-            record_query = query
-            if search_plan is not None and search_plan.get('question') != normalized_question:
+            record_query = f"{query} [대화문맥:{scope}]" if scope else query
+            if not scope and search_plan is not None and search_plan.get('question') != normalized_question:
                 record_query = f'{query} [질문별 선별:{question_id}]'
             row = self.ledger.get(selected.rcept_no, record_query)
             plan = self.ledger.plan(selected.rcept_no, record_query)
@@ -70,7 +75,8 @@ class RagService:
                                                                   if key != selected.rcept_no][:self.settings.candidate_top_k * 2]
                     progress('LLM으로 관련 후보 문서 선별 중')
                     chosen = self.llm.json(SELECTION_PROMPT,
-                        {'question': question, 'selected': selected.to_dict(),
+                        {'question': question, 'history': [t for t in recent if t['role'] == 'user'],
+                         'selected': selected.to_dict(),
                          'candidates': [c.to_dict() for c in candidates]},
                         lambda value: selected_ids(value, {c.document_rcept_no for c in candidates}))
                     chosen = list(dict.fromkeys([selected.rcept_no, *chosen]))
@@ -121,10 +127,16 @@ class RagService:
         notes = list(dict.fromkeys(note for doc in cached_docs.values() for note in doc.parse_notes))
         return {'queries': queries, 'selection': audits, 'parse_notes': notes, 'query_fallback': query_fallback}
 
-    def ask(self, selected, question, progress=lambda _: None):
-        audit = self.prepare(selected, question, progress)
-        graph = build_graph(lambda q: retrieve(self.metadata, self.documents, selected, q,
-                                               self.embeddings, self.settings), self.llm, progress)
-        result = graph.invoke({'question': question})
+    def ask(self, selected, question, progress=lambda _: None, *, history=None):
+        recent = recent_history(history, selected.rcept_no)
+        recalled = recall_answer(question, recent)
+        if recalled is not None:
+            progress('이전 대화 확인 완료')
+            return recalled
+        audit = self.prepare(selected, question, progress, history=recent)
+        audit.update(history_messages=len(recent), response_style=response_style(question), answer_basis='disclosure')
+        graph = build_graph(lambda q: retrieve(self.metadata, self.documents, selected, contextual_search(q, recent),
+                                               self.embeddings, self.settings), self.llm, progress, history=recent, receipt=selected.rcept_no)
+        result = graph.invoke({'question': question, 'history': recent, 'response_style': response_style(question)})
         progress('완료')
         return {**result, 'audit': audit}

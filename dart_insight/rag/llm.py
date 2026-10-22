@@ -34,11 +34,11 @@ class GmsClient:
             time.sleep(delay)
         self.last_call = time.monotonic()
 
-    def extract(self, selected, question):
+    def extract(self, selected, question, *, history=None):
         self._terminal_extraction_error = None
         self._wait()
         try:
-            return extract_queries(selected, question, self.settings, session=self.session)["queries"]
+            return extract_queries(selected, question, self.settings, session=self.session, history=history)["queries"]
         except QueryExtractionError as exc:
             if exc.category in ('authentication', 'not_found', 'request'):
                 self._terminal_extraction_error = str(exc)

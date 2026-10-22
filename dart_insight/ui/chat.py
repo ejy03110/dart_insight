@@ -5,8 +5,8 @@ def history_for(histories, receipt):
 
 def save_turn(histories, receipt, question, result):
     history_for(histories, receipt).extend([
-        {'role': 'user', 'content': question},
-        {'role': 'assistant', 'content': result['answer'], 'citations': result['citations'],
+        {'role': 'user', 'content': question, 'rcept_no': receipt},
+        {'role': 'assistant', 'content': result['answer'], 'rcept_no': receipt, 'citations': result['citations'],
          'audit': result.get('audit', {})}])
 
 

@@ -34,7 +34,7 @@ class RagUiTests(unittest.TestCase):
         self.service.ask.side_effect = self.answer
         self.stack.enter_context(patch('requests.sessions.Session.request', side_effect=AssertionError('Unexpected network')))
 
-    def answer(self, selected, question, progress):
+    def answer(self, selected, question, progress, **kwargs):
         progress('선별 공시 원문 수집 중')
         progress('근거 기반 답변 생성 중')
         return {'answer': f'{selected.report_nm} 답변 [근거 1]', 'citations': [
@@ -193,3 +193,29 @@ class RagUiTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any('실패 단계: XML 처리 중' in e.value for e in app.error))
         self.assertEqual(app.session_state['analyses'][FIRST.rcept_no], previous)
+
+    def test_multiturn_context_is_scoped_and_input_remains_after_all_messages(self):
+        app = AppTest.from_file(APP, default_timeout=10).run()
+        app.chat_input[0].set_value('첫 질문').run()
+        self.assertEqual(len(app.chat_input), 1)
+        self.assertEqual([m.name for m in app.chat_message], ['user', 'assistant'])
+        app.chat_input[0].set_value('그럼 쉽게 설명해줘').run()
+        forwarded = self.service.ask.call_args.kwargs['history']
+        self.assertEqual([t['role'] for t in forwarded], ['user', 'assistant'])
+        self.assertEqual(forwarded[0]['content'], '첫 질문')
+        self.assertEqual(len(app.chat_message), 4)
+        self.assertEqual(len(app.chat_input), 1)
+        calls = self.service.ask.call_count
+        app.run()
+        self.assertEqual(self.service.ask.call_count, calls)
+        self.assertEqual(len(app.chat_message), 4)
+        # Scroll block is before the input; native autoscroll is enabled.
+        scrolling = [b for b in app.get('flex_container') if getattr(b.proto, 'autoscroll', False)]
+        self.assertTrue(scrolling)
+        app.selectbox(key='chosen_receipt').select(SECOND.rcept_no).run()
+        app.chat_input[0].set_value('다른 공시 첫 질문').run()
+        self.assertNotIn('history', self.service.ask.call_args.kwargs)
+        self.assertEqual(len(app.chat_message), 2)
+        app.selectbox(key='chosen_receipt').select(FIRST.rcept_no).run()
+        self.assertEqual(len(app.chat_message), 4)
+        self.assertEqual(len(app.chat_input), 1)

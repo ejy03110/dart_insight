@@ -6,6 +6,7 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from dart_insight.rag.prompts.answer import ANSWER_PROMPT
+from dart_insight.rag.conversation import recent_history, response_style
 from dart_insight.rag.validation import AnswerValidationError, object_fields
 
 UNKNOWN = '제공된 문서에서 확인되지 않습니다.'
@@ -16,6 +17,8 @@ class RagState(TypedDict, total=False):
     evidence: list
     answer: str
     citations: list
+    history: list
+    response_style: str
 
 
 def validate_answer(value, evidence, question=''):
@@ -50,7 +53,8 @@ def validate_answer(value, evidence, question=''):
             'citations': [{'number': n, **evidence[n - 1].to_dict()} for n in numbers]}
 
 
-def build_graph(retriever, llm, progress=lambda _: None):
+def build_graph(retriever, llm, progress=lambda _: None, *, history=None, receipt=None):
+    recent = recent_history(history, receipt)
     def retrieve_node(state):
         progress('관련 근거 검색 중')
         with measure('rag_retrieval'):
@@ -62,6 +66,7 @@ def build_graph(retriever, llm, progress=lambda _: None):
         if not evidence:
             return {'answer': UNKNOWN, 'citations': []}
         payload = {'question': state['question'],
+                   'history': recent_history(state.get('history', recent), receipt), 'response_style': response_style(state['question']),
                    'evidence': [{'number': n, **e.to_dict()} for n, e in enumerate(evidence, 1)]}
         return llm.json(ANSWER_PROMPT, payload, lambda v: validate_answer(v, evidence, state['question']))
 

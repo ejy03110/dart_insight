@@ -42,7 +42,7 @@ def parse_queries(content: str) -> dict:
         raise QueryExtractionError("검색어 응답이 올바른 JSON 스키마가 아닙니다.") from None
 
 
-def extract_queries(disclosure: Disclosure, question: str, settings: Settings, *, session=None) -> dict:
+def extract_queries(disclosure: Disclosure, question: str, settings: Settings, *, session=None, history=None) -> dict:
     """Return {queries: [...]}; at most 3 calls total across transport and output retries.
 
     settings.openai_api_key holds the GMS key, not a direct OpenAI credential.
@@ -56,7 +56,7 @@ def extract_queries(disclosure: Disclosure, question: str, settings: Settings, *
         raise ConfigurationError("GMS API 키를 OPENAI_API_KEY 설정에 입력해 주세요.")
     if not settings.chat_model.strip():
         raise ConfigurationError("OPENAI_CHAT_MODEL 설정이 필요합니다.")
-    messages = build_messages(disclosure, question.strip())
+    messages = build_messages(disclosure, question.strip(), history)
     owned = session is None
     client = session if session is not None else requests.Session()
     try:
