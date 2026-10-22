@@ -6,6 +6,8 @@ from dart_insight.data.models import COMPANIES, DISCLOSURE_TYPES
 
 
 def render_diagnostics(settings):
+    from dart_insight.ui.admin_auth import require_admin
+    require_admin()
     from dart_insight.opendart.client import DartClient, DartError
     st.title("진단 도구")
     st.caption("운영 설정과 연결을 확인하는 별도 화면입니다.")

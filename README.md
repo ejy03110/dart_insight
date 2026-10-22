@@ -110,3 +110,9 @@ Q-11/Q-12 계측·GMS 오류 분류와 무료 배포 준비: [cloud-readiness.md
 실제 진단 ZIP 및 기업·공시 전환 통합 검증: [integrated-stability.md](docs/integrated-stability.md).
 
 Q-09 멀티턴·응답 형식·본문 채팅 입력창: [q09-conversation.md](docs/q09-conversation.md).
+
+## 관리자 진단
+
+일반 사용자에게 진단 메뉴는 표시하지 않습니다. 관리자 비밀번호 해시 설정과 로그인·로그아웃,
+인증 범위와 배포 시 제한은 [관리자 진단 접근 안내](docs/admin-access.md)를 참고하세요.
+실제 비밀번호·해시·API 키는 Git에 저장하지 마세요.

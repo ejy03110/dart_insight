@@ -14,6 +14,7 @@ from dart_insight.rag.query_extraction import QueryExtractionError
 from dart_insight.ui.chat import history_for, save_turn, group_citations, separate_legacy_analysis, render_copy_option
 from dart_insight.ui.layout import apply_theme, render_hero, render_company_overview, render_disclosure_header
 from dart_insight.ui.diagnostics import render_diagnostics
+from dart_insight.ui import admin_auth
 from dart_insight.vectorstore.metadata import MetadataIndexError
 
 operations = logging.getLogger("dart_insight.operations")
@@ -71,7 +72,9 @@ with st.sidebar:
             if row['receipt'] in saved_ids:
                 st.button(row['label'], key='history_' + row['receipt'],
                           on_click=navigate, args=('공시 분석', row['receipt']))
-    st.toggle('진단 도구', key='diagnostic_open', help='연결 확인과 운영 설정을 별도 화면에서 확인합니다.')
+    if admin_auth.is_admin():
+        st.toggle('진단 도구', key='diagnostic_open')
+        st.button('관리자 로그아웃', key='admin_logout', on_click=admin_auth.logout)
 
 try:
     secrets = dict(st.secrets) if st.secrets else {}
@@ -83,9 +86,14 @@ except ConfigurationError:
     st.error('서비스 설정을 확인할 수 없습니다. 관리자에게 문의해 주세요.')
     st.stop()
 
-if st.session_state.get('diagnostic_open'):
-    render_diagnostics(settings)
+if st.query_params.get('admin') == 'login' and not admin_auth.is_admin():
+    admin_auth.render_login()
     st.stop()
+if st.session_state.get('diagnostic_open'):
+    if admin_auth.is_admin():
+        render_diagnostics(settings)
+        st.stop()
+    st.session_state['diagnostic_open'] = False
 
 
 @st.cache_resource(show_spinner=False)
@@ -163,7 +171,7 @@ if page == '공시 탐색':
             find = st.form_submit_button('조건에 맞는 공시 검색')
         if find:
             if not settings.openai_api_key:
-                st.error('AI 검색을 이용하려면 서비스 인증 설정이 필요합니다. 진단 도구에서 확인해 주세요.')
+                st.error('AI 검색을 이용하려면 서비스 인증 설정이 필요합니다. 관리자에게 문의해 주세요.')
             elif not condition.strip():
                 st.info('검색 조건을 입력해 주세요.')
             elif options:
@@ -181,7 +189,7 @@ if page == '공시 탐색':
                     st.error(str(exc))
                 except Exception:
                     st.session_state['discovery_results'] = []
-                    st.error('조건 검색 실패: 진단 도구에서 서비스 연결 설정을 확인해 주세요.')
+                    st.error('조건 검색 실패: 관리자에게 서비스 연결 확인을 요청해 주세요.')
         if 'discovery_results' in st.session_state:
             searched_condition = st.session_state.get('discovery_condition', '')
             st.caption(interpret_condition(searched_condition).description)
@@ -244,7 +252,7 @@ def render_result(result):
             for citation in group['citations']:
                 st.caption(f"[근거 {citation['number']}] 청크 {citation['id']}")
                 st.text(citation.get('text', ''))
-    if result.get('audit'):
+    if result.get('audit') and admin_auth.is_admin():
         with st.expander('분석 과정 상세'):
             st.json(result['audit'])
 
@@ -259,29 +267,30 @@ def render_turn(turn):
 
 def run_question(question, *, history=None):
     if not settings.openai_api_key:
-        st.error('AI 분석을 이용하려면 서비스 인증 설정이 필요합니다. 진단 도구에서 확인해 주세요.')
+        st.error('AI 분석을 이용하려면 서비스 인증 설정이 필요합니다. 관리자에게 문의해 주세요.')
         return None
     if not settings.dart_api_key and not settings.document_bundle:
-        st.error('공시 원문에 연결할 수 없습니다. 진단 도구에서 연결 설정을 확인해 주세요.')
+        st.error('공시 원문에 연결할 수 없습니다. 관리자에게 연결 설정 확인을 요청해 주세요.')
         return None
-    with st.expander('처리 환경 상세'):
-        st.caption(f'임베딩 모델: {settings.embedding_model}, 장치: {settings.embedding_device}')
-    last_stage = '문서 수집 준비'
+    last_stage = 'start'
     try:
-        with st.status('공시 분석을 준비하고 있습니다.', expanded=False) as status:
+        with st.spinner('분석 중입니다. 잠시만 기다려 주세요.'):
             def progress(message):
                 nonlocal last_stage
-                last_stage = message
-                status.update(label='공시 원문을 읽고 있습니다.' if 'XML' in message or '임베딩' in message else message)
-                st.write(message)
+                # Stage details stay in the existing server logs, never in the UI.
+                last_stage = next((phase for word, phase in (('XML', 'parse'), ('검색', 'retrieve'), ('원문', 'collect'), ('색인', 'index'), ('생성', 'generate')) if word in message), 'processing')
+                operations.info('ui_phase=%s', last_stage)
             with Runtime(settings, metadata, embeddings) as service:
                 result = service.ask(selected, question, progress, history=history) if history else service.ask(selected, question, progress)
-            status.update(label='답변 및 근거 준비 완료', state='complete', expanded=False)
         return result
     except (ConfigurationError, DartError, LLMError, QueryExtractionError, MetadataIndexError) as exc:
-        st.error(f'실패 단계: {last_stage}. {exc}')
-    except Exception:
-        st.error(f'처리 실패 (단계: {last_stage}): 키·외부 API·모델 캐시·원문·DB 설정을 확인해 주세요. 저장된 자료는 보존되며 같은 질문으로 재시도할 수 있습니다.')
+        operations.warning('ui_request_failed phase=%s exception=%s category=%s', last_stage, type(exc).__name__,
+                           getattr(exc, 'category', 'processing'))
+        st.error('분석을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요. 이전 결과와 대화는 유지됩니다.')
+    except Exception as exc:
+        # No raw exception, prompt, URL, or credential is copied into public output/logs.
+        operations.error('ui_request_failed phase=%s exception=%s', last_stage, type(exc).__name__)
+        st.error('처리 실패: 요청을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요. 이전 결과와 대화는 유지됩니다.')
     return None
 
 
@@ -303,9 +312,8 @@ with st.container(border=True, key='disclosure_analysis'):
 with st.container(key='disclosure_chat'):
     st.subheader('공시 관련 추가 질문')
     question = st.chat_input('선택 공시에 대해 추가 질문하세요', key='followup_question')
-    with st.container(height=450, autoscroll=True, key='conversation_messages'):
-        for turn in history_for(histories, receipt):
-            render_turn(turn)
+    for turn in history_for(histories, receipt):
+        render_turn(turn)
     if question:
         result = run_question(question, history=[dict(turn) for turn in history_for(histories, receipt)])
         if result is not None:

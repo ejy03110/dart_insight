@@ -104,6 +104,7 @@ class UiShellTests(unittest.TestCase):
         saved = list(app.session_state['histories'][fixture.FIRST.rcept_no])
         calls = self.service.ask.call_count
         with patch('dart_insight.opendart.client.DartClient') as client:
+            fixture.login(app)
             app.toggle(key='diagnostic_open').set_value(True).run()
             client.assert_not_called()
             self.assertEqual(len(app.chat_input),0)

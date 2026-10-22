@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import streamlit as st
 from streamlit.testing.v1 import AppTest
+from admin_fixture import configure_admin, login
 
 from dart_insight.config import Settings
 from dart_insight.data.models import Disclosure
@@ -35,6 +36,7 @@ def start_analysis():
 
 class RagUiTests(unittest.TestCase):
     def setUp(self):
+        configure_admin(self)
         st.cache_resource.clear()
         self.addCleanup(st.cache_resource.clear)
         self.stack = self.enterContext(ExitStack())
@@ -147,6 +149,7 @@ class RagUiTests(unittest.TestCase):
             api.resolve_company.return_value = {'corp_code': FIRST.corp_code}
             api.list_disclosures.return_value = []
             app = start_analysis()
+            login(app)
             app.toggle(key='diagnostic_open').set_value(True).run()
             app.date_input[0].set_value(date(2024, 2, 1))
             app.date_input[1].set_value(date(2025, 3, 11))
@@ -209,7 +212,8 @@ class RagUiTests(unittest.TestCase):
         self.service.ask.side_effect = fail
         app.button(key='run_analysis').click().run()
         self.assertEqual(len(app.exception), 0)
-        self.assertTrue(any('실패 단계: XML 처리 중' in e.value for e in app.error))
+        self.assertTrue(any('분석을 완료하지 못했습니다' in e.value for e in app.error))
+        self.assertFalse(any('XML' in e.value for e in app.error))
         self.assertEqual(app.session_state['analyses'][FIRST.rcept_no], previous)
 
     def test_multiturn_context_is_scoped_and_single_input_follows_analysis(self):
@@ -227,9 +231,10 @@ class RagUiTests(unittest.TestCase):
         app.run()
         self.assertEqual(self.service.ask.call_count, calls)
         self.assertEqual(len(app.chat_message), 4)
-        # Conversation history retains native autoscroll below the analysis follow-up input.
+        # No fixed-height/scrolling conversation block; messages grow with the page.
         scrolling = [b for b in app.get('flex_container') if getattr(b.proto, 'autoscroll', False)]
-        self.assertTrue(scrolling)
+        self.assertFalse(scrolling)
+        self.assertFalse(any(getattr(b.proto, "height", 0) == 450 for b in app.get("flex_container")))
         open_disclosure(app, SECOND.rcept_no)
         app.chat_input[0].set_value('다른 공시 첫 질문').run()
         self.assertNotIn('history', self.service.ask.call_args.kwargs)
