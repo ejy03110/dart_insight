@@ -15,6 +15,7 @@ from dart_insight.ui.chat import history_for, save_turn, group_citations, separa
 from dart_insight.ui.layout import apply_theme, render_hero, render_company_overview, render_disclosure_header
 from dart_insight.ui.diagnostics import render_diagnostics
 from dart_insight.ui import admin_auth
+from dart_insight.ui.recent import recent_controls
 from dart_insight.vectorstore.metadata import MetadataIndexError
 
 operations = logging.getLogger("dart_insight.operations")
@@ -39,8 +40,18 @@ def navigate(page, receipt=None, company=None):
         st.session_state['explore_type'] = '전체'
     if page in ('홈', '공시 탐색', '분석 기록'):
         st.session_state['ui_section'] = page
-    elif page == '공시 분석':
+    elif page in ('공시 분석', '공시 상세'):
         st.session_state['ui_section'] = None
+
+
+def open_recent(disclosure):
+    st.session_state['recent_detail'] = disclosure
+    navigate('공시 상세')
+
+
+def back_to_recent():
+    st.session_state['explore_scope'] = '최근 7일 공시'
+    navigate('공시 탐색')
 
 
 def menu_changed():
@@ -107,7 +118,7 @@ try:
     disclosures = list_disclosures(metadata)
 except Exception:
     # Technical DB errors and configuration belong to diagnostics, not the home screen.
-    st.info('현재 공시를 불러올 수 없습니다. 잠시 후 다시 이용해 주세요.')
+    st.info('보관된 공시를 불러올 수 없습니다. 잠시 후 다시 이용해 주세요.')
 st.session_state['record_labels'] = [
     {'receipt': d.rcept_no, 'label': f'{d.corp_name} · {d.report_nm}'} for d in disclosures]
 by_id = {d.rcept_no: d for d in disclosures}
@@ -116,7 +127,8 @@ by_id = {d.rcept_no: d for d in disclosures}
 if page == '홈':
     render_hero('홈')
     search = st.text_input('기업명 또는 종목코드 검색', placeholder='예: 삼성전자, 005930', key='home_search').strip()
-    render_company_overview(disclosures, COMPANIES, search, navigate)
+    recent = recent_controls(settings)
+    render_company_overview(disclosures, COMPANIES, search, navigate, recent, open_recent)
     st.caption(DISCLAIMER)
     st.stop()
 
@@ -136,6 +148,11 @@ if page == '분석 기록':
 
 if page == '공시 탐색':
     st.title('공시 탐색')
+    scope = st.radio('공시 범위', ['보관된 공시', '최근 7일 공시'], key='explore_scope')
+    if scope == '최근 7일 공시':
+        from dart_insight.ui.recent import render_recent_list
+        render_recent_list(settings, by_id, open_recent)
+        st.stop()
     st.caption('보관된 공시에서 찾습니다. 실시간 공시 조회 결과가 아닙니다.')
     for name, default in [('explore_search', ''), ('explore_company', '전체'), ('explore_type', '전체')]:
         st.session_state['_' + name] = st.session_state.get(name, default)
@@ -215,6 +232,22 @@ if page == '공시 탐색':
                 st.caption(f'{disclosure.corp_name} · {disclosure.rcept_dt} · {disclosure.disclosure_type}')
                 st.button('공시 분석 열기', key='open_' + disclosure.rcept_no,
                           on_click=navigate, args=('공시 분석', disclosure.rcept_no))
+    st.stop()
+
+if page == '공시 상세':
+    recent_selected = st.session_state.get('recent_detail')
+    if recent_selected is None:
+        st.info('공시 탐색에서 공시를 다시 선택해 주세요.')
+        st.stop()
+    st.button('← 공시 목록', key='back_to_recent', on_click=back_to_recent)
+    render_disclosure_header(recent_selected)
+    indexed = by_id.get(recent_selected.rcept_no)
+    if indexed is not None and indexed.corp_code == recent_selected.corp_code:
+        st.caption('보관된 공시 · AI 분석 가능')
+        st.button('기존 공시 분석 열기', key='analyze_recent', on_click=navigate,
+                  args=('공시 분석', indexed.rcept_no))
+    else:
+        st.info('아직 분석 준비가 되지 않은 공시입니다. 공식 DART 원문에서 내용을 확인해 주세요.')
     st.stop()
 
 receipt = st.session_state.get('chosen_receipt')

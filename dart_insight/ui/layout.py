@@ -62,27 +62,30 @@ def render_hero(section):
         </div></section>''', unsafe_allow_html=True)
 
 
-def render_company_overview(disclosures, companies, search, navigate):
+def render_company_overview(disclosures, companies, search, navigate, recent=None, open_recent=None):
     visible = [c for c in companies if not search or search.casefold() in c.name.casefold() or search in c.stock_code]
     st.subheader('기업 살펴보기')
     if not visible:
         st.info('검색한 기업을 찾을 수 없습니다.')
         return
     for column, company in zip(st.columns(len(visible)), visible):
-        rows = [d for d in disclosures if d.corp_name == company.name]
         with column:
             with st.container(border=True, key='company_card_' + company.stock_code):
                 st.subheader(company.name)
                 st.caption(company.stock_code)
-                if rows:
-                    latest = max(rows, key=lambda d: d.rcept_dt)
-                    st.caption('보관된 공시 중 가장 최근 자료')
-                    st.write(latest.report_nm)
-                    st.caption(latest.rcept_dt)
-                    st.button('공시 살펴보기', key='company_' + company.stock_code,
-                              on_click=navigate, args=('공시 탐색', None, company.name))
-                else:
-                    st.caption('현재 살펴볼 수 있는 공시가 없습니다.')
+                if recent is not None:
+                    from dart_insight.services.recent_disclosures import latest_three
+                    from dart_insight.ui.recent import result_notice
+                    result = recent[company.stock_code]
+                    st.caption('최근 7일 공시')
+                    result_notice(result)
+                    for disclosure in latest_three(result):
+                        st.button(disclosure.report_nm, key='recent_home_' + company.stock_code + '_' + disclosure.rcept_no,
+                                  on_click=open_recent, args=(disclosure,))
+                        st.caption(disclosure.rcept_dt)
+                st.button('공시 살펴보기', key='company_' + company.stock_code,
+                          on_click=navigate, args=('공시 탐색', None, company.name))
+
 
 
 def render_disclosure_header(selected):
