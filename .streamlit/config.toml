@@ -1,0 +1,3 @@
+# Suppress developer-only cache-clear menu/shortcut while keeping function caches.
+[client]
+toolbarMode = "viewer"

@@ -1,5 +1,229 @@
 # DART Insight 진행 현황
 
+## RAG 핵심 주장 검증 최소 보강 (2026-10-22 UTC)
+
+- F2007/F2008: 배정 대상·의무보유 주체·사실/해석·자금 목적 프롬프트 보강.
+  `rag/claim_checks.py`를 기존 `validate_answer`에 연결해 인용 원문의 대응 표현/목적별 금액·사용 계획을 검사한다.
+  기존 번호/스키마/멀티턴/UI 유지. 청킹·검색·모델·사용자 데이터 변경 없음.
+- 전체 **199개 통과 / 실패 0 / skip 0**, 21.628초(기존 188 + 신규 합성 테스트 11).
+  pip check 및 diff 공백 검사 정상. GMS Mock 재시도/안전 실패와 기존 임시 DB·LangGraph 통합 회귀 포함.
+- 일반 의미 검증은 아니며 표현 밖의 주장·수치 산식·기간·정정 우선순위 등은 보증하지 않는다.
+  금양 해당 실제 원문/검색 결과와 실제 API/Windows는 미검증.
+- 변경 범위·한계·Windows 절차: [core-claim-validation.md](core-claim-validation.md).
+
+## Q-09 멀티턴·정중한 응답·본문 채팅 UI (2026-10-22 UTC)
+
+- 원인: 세션 기록은 있었지만 실제 GMS에는 전달되지 않았고 새 메시지를 입력창 뒤에 렌더링했다.
+- 최근 최대 6턴/12000자 역할·시간순 대화를 LangGraph/GMS에 전달. 문맥 해시로 캐시 구분,
+  transcript/AI 답변 영구 저장 없음. 공시 bucket + 새 turn receipt 검증, 기존 분석/채팅 분리 유지.
+- 이전 항목 회상은 실제 직전 목록을 인용하고 대화 출처로 표시. 없는/모호한 항목은 확인 요청.
+  새 사실은 현재 RAG evidence와 기존 스키마/인용 검증을 유지하며 과거 AI를 독립 근거로 추가하지 않는다.
+- ~습니다/~입니다 생성 지침 및 질문별 한 문장/간단/쉬운/상세/자동 분석 형식 분리. 문장 끝 강제 치환 없음.
+- native 450px autoscroll 대화 영역 아래 단일 입력창, 성공 후 rerun으로 시간순 렌더링. JS 가로채기 없음.
+- 전체 **188개 통과 / 실패 0 / skip 0**, 20.873초(기존 176 + 신규 12), pip check 정상.
+  실제 임시 DB/그래프 3턴·기록 격리·복구·형식·허위 인용 거절·AI 대화 문구 비영속 검증. HTTP/LLM/BGE는 테스트 대역.
+- Linux Chromium 실제 UI: 30→32→34 메시지, 단일 입력창이 모든 메시지 뒤에 유지, 자동 하단 스크롤 오차2px.
+  실제 GMS/Windows/BGE 품질은 미검증. 키 미설정. 제품 의존성/사용자 데이터 변경·삭제 없음.
+- 상세 근거·범위·Windows 절차: [q09-conversation.md](q09-conversation.md).
+
+
+## 실제 ZIP 및 다중 기업 파이프라인 통합 안정화 (2026-10-22 UTC)
+
+- 첨부 실제 20251203800556 ZIP 접근·해시 확인·73행 3열 재현. .xml 멤버 안의 UTF-8 HTML meta/br 빈 요소가 원인.
+  HTML 루트에서만 표준 빈 요소 문법 보정 후 전체 strict parse. 실제 14개 보정, 표시 본문 1505자 추출.
+  독립 HTMLParser의 전체 표시 텍스트와 일치, head/style 비본문만 명시적으로 제외. 실제 ZIP fixture 추가.
+- 캐시의 기업/기간 분리, 빈 XML 멤버 부분 성공 방지, 명시 charset 실패 후 재해석 금지,
+  불법 제어문자 위치 진단, 깊은 HTML 반복 순회, 후보/원문/저장 문서의 기업·항목 검사, UI 실패 단계 표시.
+- 전체 **176개 통과 / 실패 0 / skip 0**, 20.130초(기존 165 + 신규 11), pip check 정상.
+  실제 첨부 ZIP→파서→임시 SQLite/Chroma→LangGraph→GMS 클라이언트/검증까지 통합 시험.
+  같은 인스턴스의 3기업/유형 fixture 전환·재사용·손상 ZIP 재시도·허위 인용 거절·인증 복구·이전 색인 보존 확인.
+- 실제 원문 ZIP만 실제 데이터이며 외부 OpenDART/GMS HTTP와 BGE는 Mock/테스트 구현.
+  실제 API/Windows/사용자 1065건 DB/삼성전자 전체 ZIP은 미검증. 모델·스키마·기존 데이터 삭제/변경 없음.
+- 전체 근거·한계·Windows 재검증: [integrated-stability.md](integrated-stability.md).
+
+
+## GMS 전체 호출 경로 통합 안정화 (2026-10-22 UTC)
+
+- 검색어 추출/후보 선별/답변 생성의 HTTP 처리를 작은 공통 post_chat 함수로 통합.
+  401/403 인증, 404 모델/경로, 429 한도, 5xx 서버, timeout/network, 400/기타 요청 오류를 구분한다.
+  HTTP/통신/출력 실패를 합쳐 호출당 최대 3회, 일시 실패만 1/2초 backoff. 모든 응답 자원 해제.
+  공급자 코드/파라미터는 고정 allowlist만 표시하고 원문·키·임의 에러 메시지는 출력하지 않는다.
+- 검색어 QueryExtractionError만 원래 질문+접수번호로 fallback. 원장에 추출 성공으로 저장하지 않으며
+  다음 실행에서 재시도하고 UI/audit에 사용 사실을 유지한다. 후보 선별/최종 스키마·근거 검증은 우회하지 않는다.
+  동일 인증/모델/요청 설정 오류는 후속 GMS 호출 없이 중단한다. 새 extract는 차단 상태를 초기화한다.
+- 전체 **165개 통과 / 실패 0 / skip 0**, 13.879초(기존 157 + 신규 8). pip check 정상.
+  Mock 상태별 정상/복구/소진/혼합 총예산/비노출, 실제 임시 Chroma/SQLite/LangGraph fallback·허위 인용 거절·
+  정상 추출 복구·본문 재사용, AppTest 경고 유지 검증. 기존 HTTP 즉시 실패 테스트는 새 재시도 정책으로 갱신.
+- 실제 Windows의 최근 추출 오류 HTTP 상태/응답은 제공되지 않아 원인 미확정.
+  실제 GMS/OpenDART/BGE·Windows 브라우저는 미검증. .env/Chroma/SQLite/사용자 데이터 변경·삭제 없음.
+- 최신 정책·Windows 재검증·남은 인증/모델/자원 장애 요인: [gms-recovery.md](gms-recovery.md).
+
+
+## 실제 GMS 검증 로그 후속 진단 (2026-10-22 UTC)
+
+- 사용자 실제 HTTP 200/finish=stop/schema_or_grounding 로그는 JSON 해석 후 콜백 검증 실패를 뜻한다.
+  기존 메시지로는 필드/인용/내부 오류를 구별할 수 없다. 실제 응답/키가 없어 단일 원인 확정 불가.
+- AnswerValidationError/SelectionValidationError로 schema/citation/grounding 및 정적 field/rule 구분.
+  클래스/규칙/근거 개수만 기록하며 값·원문·임의 추가 필드명·예외 메시지는 출력하지 않는다.
+  미분류 내부 검증 오류는 별도 코드로 즉시 실패, 교정 가능한 출력만 기존 한도 내 재시도.
+- JSON 두 필드와 answer 내부 Markdown/boolean 자료형, 인용 number와 실제 청크 id 차이를 프롬프트에 명시.
+  기존 검증 조건을 완화하거나 인용을 임의 보정하지 않는다. 분석/채팅 동일 경로의 정확한 ID 매핑 테스트 추가.
+- 전체 **157개 통과 / 실패 0 / skip 0**, 13.146초(기존 150 + 신규 7). Mock 경계와 실제 LangGraph/임시 DB 회귀 검증.
+  [진단 절차](gms-validation-diagnostics.md) 참고.
+  실제 API/Windows 브라우저 미검증. 데이터/모델/DB 변경 없음.
+
+
+## Q-11 성능 계측 / Q-12 GMS 검증 / 무료 배포 준비 (2026-10-22 UTC)
+
+- GMS 실패 실제 응답/키는 없어 Windows 원인은 미확정. envelope/종료 사유/JSON/스키마·근거 오류 분리,
+  전체 코드블록/문자열 text 블록 허용, 잘린 정상 JSON·거절·중복 키·NaN·잘못된 인용 거절.
+  교정 가능한 출력 오류만 최대 2회 교정 재시도, HTTP/모델 구조 등은 구분해 안내한다.
+  검색어 경로도 동일 envelope 진단/자원 해제 적용. 예전 envelope 무조건 재시도 테스트는 새 정책에 맞춰 즉시 실패로 갱신.
+- 내용/키를 기록하지 않는 단계별 elapsed/HTTP/finish/token/문서·청크 재사용 계측 추가.
+  다운로드/XML/청킹/모델 로드/임베딩/저장/검색/GMS 단계를 구분한다.
+- 동일 요청 내 공시 중복 청킹·색인 검증 제거. 다음 요청에서는 DB 일관성 재검증 유지.
+  성공한 본문/청크 임베딩 재사용 및 실패 재개 유지. 모델 최초 로딩 잠금, CPU batch 4 설정 추가(문서 절단 없음).
+- 합성 417청크 실제 Chroma/SQLite/LangGraph 단일 비교: 최초 13.9662→12.5370초,
+  재분석 0.1488→0.0825초. 재분석 다운로드/문서 임베딩 0, 질문 임베딩 1.
+  BGE/GMS/HTTP는 테스트 구현이므로 실제 사업보고서 성능이나 품질 검증이 아니다.
+- 전체 자동화 **150개 통과 / 실패 0 / skip 0**(기존 144 + 신규 6), pip check 정상.
+  Linux Python 3.12.14 검증. 실제 OpenDART/GMS/BGE·Windows Python 3.11·Cloud 배포 미검증.
+- BGE 공식 모델 API 가중치 파일 2,271,145,830바이트 확인. Cloud 현행 무료 자원 공식 문서는 접근 실패.
+  무료 운영 가능을 보장하지 않으며 초기 DB 안전 전달/재시작 복구·메모리 실측이 배포 장애 요인.
+  배포 실행/아키텍처 교체 없음. .env/SQLite/Chroma 사용자 데이터 삭제·덮어쓰기 없음.
+- 설정·성능 재현·실제 Windows 검증·초기 데이터 설계: [cloud-readiness.md](cloud-readiness.md).
+
+
+## Q-07 세 유형 통합 전처리 (2026-10-22 UTC)
+
+- 사용자 전체 ZIP 진단 보고의 제목형 꺾쇠(공백 유무/인라인 포함)·단독 앰퍼샌드를 토큰 단위로 처리.
+  정상 태그/Unicode 태그/속성/정상 엔티티/CDATA/주석/처리 명령은 보존. 일반 recover 파서로 본문을 버리지 않는다.
+- 모든 XML의 엄격 재파싱을 유지하며 한 건이라도 실패하면 전체 본문 반환·RAG 색인을 거절한다.
+  ZIP 100 MiB/1,000개·실제 읽기 크기·엔티티 선언 금지·경로 비추출 유지. 기존 데이터 삭제/스키마 변경 없음.
+- 제목·앰퍼샌드·HTML 엔티티 보정 건수를 원장과 UI에 전달. 사용자 제공 실제 발췌를 3개 XML fixture에 배치해
+  전체 추출 문자열을 비교했고, 임시 실제 Chroma/SQLite/LangGraph에서 새 유형까지 색인·근거·안내 유지 검증.
+- 전체 자동화 **144개 통과 / 실패 0 / skip 0**, 13.678초. 기존 142개에 신규 2개 추가.
+  외부 HTTP/LLM/임베딩은 Mock이며, 실제 OpenDART/BGE/GMS·Windows 브라우저 검증이 아니다.
+- 실제 전체 ZIP은 클라우드에 없어 세 실제 XML의 엄격 재파싱/본문 무손실은 미검증.
+  사용자 보고 100/52/52는 복구 파서의 진단 수이며 실제 보정 건수로 간주하지 않는다.
+  [Windows 전체 ZIP 재검증](q07-q10-followup.md)의 단일 CLI로 모든 XML 검사 후에만 새 UTF-8 본문을 저장한다.
+
+
+## Q-07 실제 제목형 XML / Q-10 복사 후속 수정 (2026-10-22 KST)
+
+- 사용자 제공 실제 ZIP 발췌로 원인 확인: `20250311001085`, UTF-8 첫 XML 6,298,681바이트/총 3개,
+  6263행 `<P>< TV 시장점유율 추이 ></P>`가 XML 태그 문법을 위반한다. 회귀 입력에서 행 6263/열 4 재현.
+- 정상 P/SPAN의 단독 한글 다단어 제목에 한해 꺾쇠를 문자로 보존하는 제한적 보정.
+  정상 태그/CDATA/주변 수치 보존, 모든 XML 검사, 추가 손상 시 부분 본문 반환/색인 거절.
+  100 MiB·1,000개·엔티티/원격 DTD/ZIP 경로 제한 유지.
+- 보정 내역은 선택 필드 parse_notes로 원장/재질문/분석·채팅에 유지. 빈 필드는 기존 JSON 형태를 유지하며
+  SQLite 스키마·기존 완료 행을 바꾸지 않는다. inspect_document에 --show-repairs/--text-output 추가(새 UTF-8 파일만).
+- Q-10: 공식 client.toolbarMode=viewer 설정으로 개발자 캐시 삭제 메뉴/단축키 경로 차단.
+  localhost auto의 일반 c 팝업은 실제 Chromium 재현. Linux 정상 Ctrl+C 오작동 자체는 재현되지 않아 Windows와 구분.
+  분석/채팅에 st.code 기본 복사 아이콘 추가. 임의 JavaScript 키 이벤트 가로채기 없음.
+- **전체 142개 통과 / 실패 0 / skip 0**, 15.443초 (기존 135 + 신규 7). 실제 임시 Chroma/SQLite/LangGraph에서
+  복구 텍스트→색인→근거→답변·안내 유지 검증. HTTP/LLM/BGE는 Mock.
+- Linux Chromium 154 실제 클립보드: 선택/미선택 Ctrl+C, 두 복사 아이콘의 한글/줄바꿈 내용 일치,
+  일반 c 팝업 없음·resource cache 유지 확인. Playwright는 /tmp 별도 환경에만 설치, 운영 의존성 변경 없음.
+- **전체 실제 ZIP·나머지 XML 내용·실제 OpenDART/BGE/GMS·Windows 브라우저는 미검증**.
+  클라우드에는 해당 ZIP·API 키·1,065건 DB가 없다. 사용자 제공 발췌와 테스트 fixture를 전체 실제 파일 검증으로 간주하지 않는다.
+- 재검증 명령/근거: [q07-q10-followup.md](q07-q10-followup.md). 기존 .env/Chroma/SQLite/모델 데이터 삭제 없음.
+
+## Windows E2E Q-01~Q-08 수정 (2026-10-22 KST)
+
+- 사용자 실제 검증 보고: Windows 앱 실행·기존 메타데이터 1,065건 인식·임원 공시 분석/채팅·출처·공시별 기록 복귀·자연어 탐색/선택 등을 확인했다고 보고받았다.
+  이는 사용자 로컬 증거이며 BGE 검색 품질·GMS API 인증을 이번 클라우드에서 검증한 것으로 기록하지 않는다.
+- Q-07: 인코딩/BOM·다중 XML·문자 엔티티/일반 앰퍼샌드 처리와 원인별 오류/진단 ZIP 보존/inspect_document CLI 추가.
+  합성 회귀 입력으로 기존 파서의 실패 조건을 재현했다. **실제 문제 사업보고서 ZIP·키가 없어 원인 미확정, 실제 해결 미검증**.
+  100 MiB·XML 1,000개 제한과 엔티티 선언 거절·경로 비추출을 유지한다.
+- Q-06: 분석은 analyses, 추가 질문은 histories로 공시별 상태 분리. 기존 세션의 자동 분석도 별도 영역으로 이동.
+  공시 전환/복귀·후속 질문에 분석 재실행 없음 검증.
+- Q-05: 기본 제출연도 vs 명시적 사업연도를 구분해 검색 기준 표시. 실제 색인 전체에서 명시 조건 후보 보완.
+  2025년 제출/2024 사업연도/2035 없음 및 본문 수치 조건 안내 구분 검증.
+- Q-01/02: 취득 수량·방식·목적 구분, 없는 목적의 확인 불가 검증, Markdown 구획 지침.
+- Q-03: URL별 링크 1개로 묶되 번호·유형·청크 ID/텍스트 추적 유지.
+- Q-04: 같은 검색어라도 다른 질문이면 기존 후보에서 재선별하도록 수정. 외부 검색·다운로드는 재사용하고 기존 완료 행을 보존한다. 단일 문서 유지/복수 비교·재질문을 임시 Chroma/SQLite로 검증. 실제 관련성은 미검증.
+- Q-08: 날짜 변경 즉시 수집 안내 명령 갱신, 연결 확인에도 동일 기간 사용.
+- 전체 **135개 통과 / 실패 0 / skip 0**, 12.214초, Linux Python 3.12. 기존 114 + 신규 21.
+  기존 UI 분석 저장 기대값과 검색 인덱스 Mock fixture는 새 동작에 맞게 갱신했으며 테스트를 비활성화하지 않았다.
+  pip check·compileall·git diff --check 통과. .env·설정/잠금 파일·원장/메타데이터 저장 코드·운영 DB 변경 없음.
+- 상세 원인/한계·Windows 재검증: [e2e-fixes.md](e2e-fixes.md). 심화 기능 추가 없음. master 병합 없음.
+
+## 필수 F2001~F2012 통합 구현 (2026-10-22 KST)
+
+이번 사용자의 통합 구현 요청과 첨부 공식 PDF가 아래 과거 단계별 상태보다 우선한다.
+공식 PDF 23쪽을 확인했으며 심화 F2013~F2016은 구현하지 않는다.
+
+- 기존 master의 F2001~F2003에 미병합 원격 F2004/Windows 수정 계보(`adc7475`, `02c947f`, `a18dafe`)를 merge했다.
+  브랜치 `feat/required-rag-integration`. master에 직접 push/자동 병합하지 않는다.
+- F2004 실제 외부 목록 검색·LLM 후보 선별·OpenDART ZIP/XML·실제 원문 묶음 대체·개별 다운로드/검색 계획 재개를 구현했다.
+- F2005 별도 `dart_documents`·1000/200 설정 청킹·항목/문서/본문설정 해시 ID·검증 후 원장 완료.
+- F2006 선택 메타 고정/공시별 문서 검색·병합/중복 제거, F2007 실제 LangGraph retrieve→generate,
+  F2008 인용 번호 검증·인용한 근거만 표시·무인용 안내를 연결했다.
+- F2009 공시별 채팅 세션, F2010 핵심 내용/명시된 위험 요인 분석, F2011 조건 후보→LLM 선별→공시 이동,
+  F2012 진행/키/색인/빈 결과/안전한 오류/금융 면책 화면을 구현했다.
+- GMS는 기존 OPENAI_API_KEY를 유지하면서 클라우드용 GMS_API_KEY 별칭을 추가했다. 직접 OpenAI 호출 없음.
+- **전체 114개 테스트 통과, 실패/skip 0** (Linux/Python 3.12). 실제 임시 Chroma/SQLite/LangGraph,
+  외부 API·BGE 임베딩은 Mock. 기존 67 + 통합 브랜치 24 + 신규 23.
+  AppTest로 채팅→항목 전환→복귀, 분석 버튼, 조건 검색→항목 이동, 무인용/안전한 오류를 확인했다.
+- pip check, compileall, CLI help, git diff --check 통과. Windows 직접 실행은 미검증이며
+  신규 Chroma 통합 검증은 자식 프로세스로 격리해 Windows 파일 잠금 정리 문제를 피한다.
+- **실제 API·BGE·1,065건 E2E 완료 아님**: 현재 머신 DART/GMS 키 없음, OpenDART/Hugging Face 프록시 403,
+  사용자 실제 collection.json/DB/모델 캐시 없음. 인수인계의 로컬 수집·색인/GMS 성공 보고와 구분한다.
+- 새 설계/공식 PDF 대조표·제출용 실검증 체크리스트: [required-integration.md](required-integration.md).
+  Windows 실행 명령은 README. 실제 품질·응답 시간·스크린샷·셀프/상호 체크리스트는 미완료다.
+
+아래 기록은 당시 상태이며 '미구현'·'설계만' 표현은 위 구현 결과로 대체한다.
+
+
+## F2004-2 Chroma 통합 테스트 프로세스 격리 (2026-10-21)
+
+- 이전 동일 프로세스 close 방식 대신 `tests/chroma_candidate_worker.py`에서 실제 Chroma 검증 수행.
+  부모는 sys.executable과 인자 배열로 자식을 실행하고 완전히 종료된 뒤 임시 폴더를 삭제한다.
+- 자식의 비정상 종료는 종료 코드·stdout·stderr를 부모 실패 메시지에 전달한다.
+  60초 시간 제한 초과 시 subprocess.run이 자식을 kill/wait한 후 실패하며 오류를 무시하지 않는다.
+- 정상 검색·검색 전후 불변·모델 불일치, 의도적 예외와 traceback 전달, 별도 자식의 DB 재연결 검증.
+  공개 close도 자식에서 유지하되 최종 파일 핸들 해제는 프로세스 수명으로 격리한다.
+- 전체 91개 통과(실패/skip 0, Linux/Python 3.12). Windows 직접 실행은 미수행.
+  비공개 종료 API 사용 없음. 검색 서비스·운영 DB 코드·운영 데이터 변경 없음.
+
+## F2004-2 Chroma 테스트 자원 정리 (2026-10-21)
+
+- 고정/설치 ChromaDB 1.5.9의 공개 Client.close()/context manager 확인.
+  close()는 공유 System 참조를 해제하고 마지막 클라이언트 종료 시 System을 중지한다.
+- 후보 검색 통합 테스트 전용 helper에서 PersistentClient 생성 시 ExitStack에 등록하고
+  예외 포함 모든 경로에서 임시 폴더 정리 전에 종료한다. 전역 캐시 초기화·reset·데이터 삭제 API 미사용.
+- 예외 후 영속 데이터 보존·재연결·폴더 rename 및 정상 임시 폴더 정리 확인.
+  전체 91개 통과(실패/skip 0, Linux/Python 3.12). Windows 직접 재검증은 미수행.
+  운영 코드·스키마·데이터 변경 없음.
+
+## F2004-2 후보 검색 (2026-10-21)
+
+- `services/candidate_search.py`: 기존 dart_metadata/query_metadata 재사용, 다중 검색어별 top_k,
+  접수번호 중복 제거, 회사명·출처·검색어별 거리/유사도 추적, 선택 공시 강제 포함.
+- 기존 DocumentCandidate를 감싼 CandidateHit로 검색 근거를 제공하며 기존 모델 필드를 변경하지 않는다.
+  빈 검색 결과와 예외를 구분한다. 원장 갱신·외부 API·LLM 선정·원문 다운로드·색인 구현 없음.
+- `tests/test_candidate_search.py`: Mock 및 임시 실제 Chroma/1024차원 모의 벡터로 신규 11개,
+  전체 90개 통과(실패/skip 0). 실제 사용자 DB·실제 모델 검색 품질은 미검증.
+- 사용법·결과 계약: [f2004.md](f2004.md). F2004 전체 완료를 의미하지 않는다.
+
+## F2004 SQLite 종료 경로 보완 (2026-10-21)
+
+- 원장과 트리거 테스트에서 커서를 명시적으로 닫은 뒤 트랜잭션 종료·연결 종료를 수행한다.
+  초기 설정도 try/finally 안에서 수행하여 예외 경로에서 연결이 남지 않도록 했다.
+- traceback·커서·연결 참조가 남아 있어도 종료되고 임시 DB가 즉시 삭제되는 회귀 테스트 추가.
+  오류 무시·GC 강제 호출 없이 전체 80개 통과(실패/skip 0, Linux/Python 3.12).
+  Windows 11/Python 3.11/pytest 직접 재검증은 미수행. DB 스키마·공개 기능 변경 없음.
+
+## F2004 첫 단계 (2026-10-21)
+
+- `data/documents.py`: DocumentCandidate/CollectedDocument, 선택 공시·원문 접수번호·출처·본문·수집 시각 보존 및 검증.
+- `data/collection_ledger.py`: 선택 공시+정규화 검색어+출처 기준 SQLite 영속 원장.
+  pending/collected/indexed 분리, 성공 단계만 갱신, 수집·색인 실패 후 재시도, 트랜잭션 저장.
+- F2004 모델/원장 테스트 12개 포함 전체 79개 통과, 실패/skip 0.
+  외부 API·LLM 선별·실제 색인 미구현. F2001~F2003·Chroma 코드 변경 없음.
+- 상세 계약과 사용법: [f2004.md](f2004.md). 아래 F2004 미구현 표에서 모델·원장 부분만 이 결과로 대체한다.
+
 ## F2003 추가 결과 (2026-10-21)
 
 - `rag/prompts/query_extraction.py`: 공시 분석 전문가 역할, 선택 메타데이터+질문 입력, JSON 출력 지시.

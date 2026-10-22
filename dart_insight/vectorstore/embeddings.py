@@ -5,6 +5,8 @@ contact an embedding API. Only encode() on first actual use loads the model.
 """
 
 import math
+from threading import RLock
+from dart_insight.diagnostics import measure
 from pathlib import Path
 
 from dart_insight.config import ConfigurationError, Settings
@@ -31,17 +33,23 @@ class LocalEmbeddings:
         self.cache_dir = cache_dir
         self.batch_size = batch_size
         self._model = None
+        self._load_lock = RLock()
 
     def _load(self):
+        with self._load_lock:
+            return self._load_once()
+
+    def _load_once(self):
         if self._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
 
-                self._model = SentenceTransformer(
-                    self.model_name, device=self.device,
-                    cache_folder=str(self.cache_dir) if self.cache_dir else None,
-                    trust_remote_code=False,
-                )
+                with measure('bge_model_load'):
+                    self._model = SentenceTransformer(
+                        self.model_name, device=self.device,
+                        cache_folder=str(self.cache_dir) if self.cache_dir else None,
+                        trust_remote_code=False,
+                    )
             except Exception:
                 raise LocalEmbeddingError("로컬 모델 로드 실패: 패키지 설치·모델 캐시·Hugging Face 접근·메모리를 확인하세요.") from None
         return self._model
@@ -70,9 +78,9 @@ class LocalEmbeddings:
         return self.embed_documents([text])[0]
 
 
-def create_embeddings(settings: Settings, *, batch_size=16) -> LocalEmbeddings:
+def create_embeddings(settings: Settings, *, batch_size=None) -> LocalEmbeddings:
     return LocalEmbeddings(
         model_name=settings.embedding_model, device=settings.embedding_device,
         cache_dir=settings.embedding_cache_dir or settings.data_dir / "models",
-        batch_size=batch_size,
+        batch_size=settings.embedding_batch_size if batch_size is None else batch_size,
     )

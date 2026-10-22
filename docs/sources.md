@@ -5,7 +5,7 @@
 | 요구사항 | 사용자가 첨부한 `AI코어프로젝트_2회차_요구사항정의서.pdf` (23쪽) | 전체 텍스트 검토. 문서에 대외비 표시가 있어 공개 저장소에 원본을 복사하지 않음 |
 | 기업코드 | https://opendart.fss.or.kr/api/corpCode.xml | 인증 필요. 종목코드 기준 기업 매칭 |
 | 공시 메타데이터 | https://opendart.fss.or.kr/api/list.json | 인증 필요. 실제 수집 성공 여부는 `validation.md` 참조 |
-| 공시 원문 | https://opendart.fss.or.kr/api/document.xml | 후속 구현. ZIP/XML 원본과 텍스트·출처 manifest 보존 예정 |
+| 공시 원문 | https://opendart.fss.or.kr/api/document.xml | ZIP/XML에서 텍스트 추출 구현. 인증키 없는 뷰어 URL·제목·원문 접수번호·수집시각을 원장/청크에 보존. 실제 호출은 이번 클라우드에서 미검증 |
 | 사용자용 원문 | https://dart.fss.or.kr/ | 접수번호별 공시 뷰어 URL 사용. 로그인 키 포함 금지 |
 | 공식 가이드 | https://opendart.fss.or.kr/guide/main.do | 현재 클라우드 프록시에서 접근 차단. 최신 파라미터·오류코드·호출 정책 재확인 필요 |
 | 이용약관·제공 정책 | OpenDART 사이트의 이용약관·인증키 신청/이용 안내 | 현재 원문 접근 차단으로 이용 조건 확인 미완료. 데이터 공개 재배포 권한을 확인한 것으로 간주하지 않음 |

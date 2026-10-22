@@ -77,22 +77,27 @@ class QueryExtractionTests(unittest.TestCase):
         self.assertIn("2회", str(caught.exception))
         self.assertNotIn("test-gms-key", str(caught.exception))
 
-    def test_malformed_envelope_and_non_json_response_retry(self):
+    def test_malformed_envelope_and_non_json_response_fail_without_retry(self):
         invalid_json = Mock(status_code=200)
         invalid_json.json.side_effect = ValueError("sensitive")
-        self.session.post.side_effect = [invalid_json, Mock(status_code=200, json=lambda: {"choices": []}),
-                                         self.response('{"queries":["정정공시 변경 조건"]}')]
-        self.assertIn(self.disclosure.rcept_no, self.extract()["queries"])
-        self.assertEqual(self.session.post.call_count, 3)
+        for response in (invalid_json, Mock(status_code=200, json=lambda: {"choices": []})):
+            self.session.post.reset_mock()
+            self.session.post.return_value = response
+            with self.assertRaises(QueryExtractionError) as caught:
+                self.extract()
+            self.assertIn('envelope', str(caught.exception))
+            self.assertEqual(self.session.post.call_count, 1)
+            response.close.assert_called_once()
 
-    def test_http_and_transport_errors_are_safe_and_not_retried(self):
+    @patch("dart_insight.rag.query_extraction.time.sleep")
+    def test_http_and_transport_errors_follow_transient_retry_policy(self, sleep):
         for status in (302, 401, 403, 429, 500):
             with self.subTest(status=status):
                 self.session.reset_mock()
                 self.session.post.return_value = Mock(status_code=status)
                 with self.assertRaises(QueryExtractionError):
                     self.extract()
-                self.assertEqual(self.session.post.call_count, 1)
+                self.assertEqual(self.session.post.call_count, 3 if status in (429, 500) else 1)
         self.session.post.side_effect = requests.Timeout("test-gms-key secret response")
         with self.assertRaises(QueryExtractionError) as caught:
             self.extract()
