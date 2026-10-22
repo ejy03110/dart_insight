@@ -21,6 +21,8 @@ SECOND = replace(FIRST, rcept_no='20250101000002', report_nm='감사보고서',
 
 def explore(app):
     app.radio(key='ui_section').set_value('공시 탐색').run()
+    if app.radio(key='_explore_scope').value!='보관된 공시':
+        app.radio(key='_explore_scope').set_value('보관된 공시').run()
     return app
 
 

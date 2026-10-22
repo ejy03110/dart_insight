@@ -38,6 +38,7 @@ def apply_theme():
     .company-card strong {font-size:1.3rem;color:#163d66;}
     [data-testid="stLinkButton"] a {border-radius:10px;}
     .st-key-detail_return {padding-top:12px;}
+    .st-key-search_pagination button[kind="primary"] {background:#173e67;border-color:#173e67;color:white;opacity:1;}
     .original-document {max-width:100%;overflow-wrap:anywhere;line-height:1.8;}
     .original-document table {width:100%;table-layout:fixed;border-collapse:collapse;margin:1rem 0;}
     .original-document td,.original-document th {border:1px solid #dce4ee;padding:.5rem;white-space:pre-wrap;overflow-wrap:anywhere;}

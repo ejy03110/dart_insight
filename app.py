@@ -14,7 +14,7 @@ from dart_insight.rag.query_extraction import QueryExtractionError
 from dart_insight.ui.chat import history_for, save_turn, group_citations, separate_legacy_analysis, render_copy_option
 from dart_insight.ui.layout import apply_theme, render_hero, render_company_overview, render_disclosure_header
 from dart_insight.ui.diagnostics import render_diagnostics
-from dart_insight.ui import admin_auth
+from dart_insight.ui import admin_auth, routes
 from dart_insight.ui.recent import recent_controls
 from dart_insight.vectorstore.metadata import MetadataIndexError
 
@@ -25,7 +25,10 @@ if not operations.handlers:
 operations.propagate = False
 
 st.set_page_config(page_title='DART Insight', page_icon='📄', layout='wide')
+
+selected_route = routes.register_pages()
 apply_theme()
+routes.sync_route(selected_route)
 
 
 def navigate(page, receipt=None, company=None):
@@ -38,21 +41,24 @@ def navigate(page, receipt=None, company=None):
         st.session_state['explore_search'] = ''
         st.session_state.pop('explore_dates', None)
         st.session_state['explore_type'] = '전체'
+        st.session_state['explore_scope'] = '보관된 공시'
     if page in ('홈', '공시 탐색', '분석 기록'):
         st.session_state['ui_section'] = page
     elif page in ('공시 분석', '공시 상세'):
         st.session_state['ui_section'] = None
+    routes.write_route()
 
 
 RETURN_FILTERS = ('explore_search','explore_company','explore_type','explore_dates','explore_page',
-                  'recent_search','recent_company','recent_type','recent_dates','recent_page')
+                  'recent_search','recent_company','recent_type','recent_dates','recent_page','api_query','api_page')
 
 
-def open_recent(disclosure):
+def open_recent(disclosure,origin='recent'):
     st.session_state['recent_return'] = {
         'scope': st.session_state.get('explore_scope','최근 7일 공시') if st.session_state.get('ui_page')=='공시 탐색' else '최근 7일 공시',
         'filters': {key:st.session_state[key] for key in RETURN_FILTERS if key in st.session_state}}
     st.session_state['recent_detail'] = disclosure
+    st.session_state['detail_origin'] = origin
     navigate('공시 상세')
 
 
@@ -65,6 +71,7 @@ def back_to_recent():
 
 def remember_scope():
     st.session_state['explore_scope']=st.session_state['_explore_scope']
+    routes.write_route()
 
 
 def remember_page():
@@ -86,6 +93,7 @@ analyses = st.session_state.setdefault('analyses', {})
 separate_legacy_analysis(histories, analyses, ANALYSIS_QUESTION)
 page = st.session_state.setdefault('ui_page', '홈')
 st.session_state.setdefault('ui_section', '홈')
+st.session_state.setdefault('explore_scope','전체 기간 검색')
 with st.sidebar:
     st.markdown('## DART Insight')
     st.caption('공시로 보는 기업의 오늘과 내일')
@@ -166,7 +174,11 @@ if page == '분석 기록':
 if page == '공시 탐색':
     st.title('공시 탐색')
     st.session_state['_explore_scope']=st.session_state.get('explore_scope','보관된 공시')
-    scope = st.radio('공시 범위', ['보관된 공시', '최근 7일 공시'], key='_explore_scope',on_change=remember_scope)
+    scope = st.radio('공시 범위', ['전체 기간 검색','보관된 공시', '최근 7일 공시'], key='_explore_scope',on_change=remember_scope)
+    if scope == '전체 기간 검색':
+        from dart_insight.ui.search import render_search
+        render_search(settings,by_id,open_recent)
+        st.stop()
     if scope == '최근 7일 공시':
         from dart_insight.ui.recent import render_recent_list
         render_recent_list(settings, by_id, open_recent)
@@ -255,8 +267,26 @@ if page == '공시 탐색':
 
 if page == '공시 상세':
     recent_selected = st.session_state.get('recent_detail')
+    if recent_selected is None and st.session_state.get('route_receipt'):
+        receipt=st.session_state['route_receipt']
+        if st.session_state.get('detail_origin')=='api':
+            from dart_insight.ui.search import query_from_state,search_service
+            try:
+                query=query_from_state()
+                if query:
+                    with st.spinner('공시 정보를 확인하고 있습니다.'):
+                        result=search_service(settings).search(query,st.session_state.get('api_page',1))
+                    recent_selected=next((d for d in result.items if d.rcept_no==receipt),None)
+            except (ValueError,KeyError,TypeError):
+                pass
+        else:
+            from dart_insight.ui.recent import recent_service
+            recent_selected=next((d for r in recent_service(settings).peek().values() for d in r.disclosures if d.rcept_no==receipt),None)
+        if recent_selected is not None:
+            st.session_state['recent_detail']=recent_selected
     if recent_selected is None:
-        st.info('공시 탐색에서 공시를 다시 선택해 주세요.')
+        st.info('이 주소의 공시 정보를 현재 조회 범위에서 복원하지 못했습니다. 공시 탐색에서 다시 선택해 주세요.')
+        st.button('공시 탐색으로 이동',on_click=back_to_recent)
         st.stop()
     render_disclosure_header(recent_selected,show_source=False,show_identifiers=False)
     from dart_insight.ui.document_view import render_document

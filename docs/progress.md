@@ -1,5 +1,27 @@
 # DART Insight 진행 현황
 
+## 전체 기간 검색·페이지·URL 이동 (2026-10-22 UTC)
+
+- 시작: 변경 없는 `feat/ui-ux-improvement`, 원격/로컬 `3566c67` 일치.
+- 원인: 기존 탐색이 최근 7일 서비스 결과를 재사용했다. 홈은 유지하고 별도 전체 기간 목록 서비스를 추가했다.
+- `services/disclosure_search.py`: 기존 DartClient 재사용, 기업명/종목/기업코드 또는 전체 기업,
+  기간/유형/제목 조건, API 20건 서버 페이지, 오류/빈 결과 분리, 5분/실패1분 캐시와 요청 잠금.
+  전체 기업 최대90일/3개월 미만, 제목은 API 미지원으로 최대1,000건 제한 조회 후 검색하고 초과는 안내한다.
+- `ui/search.py`, `ui/routes.py`, `app.py`, `ui/layout.py`: 탐색 범위 분리, 하단 처음/이전/번호/다음/마지막,
+  조건 변경1페이지, 상세 복귀 조건/페이지 보존, 공식 navigation/switch_page/query_params URL 경로 도입.
+- 변경 전 **248 통과**, 최종 **263 통과/실패0/skip0**, 42.617초.
+  서비스9개/UI6개 추가: 2020년 공시·전체/기업·유형/제목·API페이지·3건 제한 기존회귀·캐시·오류·직접URL·색인없음·상세복귀.
+  AppTest의 callable 페이지 hash 보존 한계로 테스트에서 navigation 전송만 대체하며 실제 이동은 Chromium으로 별도 확인한다.
+- Chromium PC1440/모바일390: 20건/2페이지/마지막5건/첫페이지, 상세→뒤로목록2페이지→앞으로상세,
+  새로고침·별도 탭 URL·하단복귀 확인. 실제 history 증가, 가로 넘침/화면 예외 없음.
+  fixture는 외부 HTTP·RAG 실행 시 실패하도록 차단한다. 재현 스크립트 tests/search_browser_fixture.py/check_search_browser.py.
+- **제약:** Streamlit1.62 popstate의 마지막 쿼리 재사용 때문에 서로 다른 과거 필터/페이지/접수번호의
+  완전한 browser history 복원은 보장하지 않는다. 경로 기반 화면 이동과 하단 버튼 복귀만 검증 범위로 보고한다.
+  공식 기능의 한계와 완전한 라우터 대안은 [disclosure-search.md](disclosure-search.md)에 기록했다.
+- DART 키 미설정: 실제 API 미호출/미검증. 모든 검색·브라우저 자료는 합성 응답이다.
+  기존 RAG/수집/관리자 인증 내부 파일 변경 없음. run_question/render_result/render_turn AST 동일.
+  DB·색인·환경변수 변경 없음. .env/secrets.toml/.local 무시 및 추적0, pip check/diff 검사 통과.
+
 ## UI/UX 6단계 — 최신 본문 열람·복귀 수정 (2026-10-22 KST)
 
 - 시작: 원격 FETCH_HEAD/로컬 `0ab35ff` 일치, 변경 없는 `feat/ui-ux-improvement`.
