@@ -11,7 +11,7 @@ from dart_insight.services.discovery import discover, interpret_condition, empty
 from dart_insight.services.runtime import Runtime, list_disclosures, open_store
 from dart_insight.rag.llm import GmsClient, LLMError
 from dart_insight.rag.query_extraction import QueryExtractionError
-from dart_insight.ui.chat import history_for, save_turn, group_citations, separate_legacy_analysis
+from dart_insight.ui.chat import history_for, save_turn, group_citations, separate_legacy_analysis, render_copy_option
 from dart_insight.vectorstore.metadata import MetadataIndexError
 
 st.set_page_config(page_title='DART Insight', page_icon='📄', layout='wide')
@@ -142,6 +142,13 @@ separate_legacy_analysis(histories, analyses, ANALYSIS_QUESTION)
 
 def render_result(result):
     st.markdown(result['content'])
+    render_copy_option(result['content'])
+    notes = result.get('audit', {}).get('parse_notes', [])
+    if notes:
+        st.warning('원문 XML의 제목 표기를 문자 보존 방식으로 보정했습니다. 아래 보정 내역을 확인하세요.')
+        with st.expander('XML 보정 내역'):
+            for note in notes:
+                st.text(note)
     if not result.get('citations'):
         st.info('답변에 인용된 근거가 없습니다.')
     for group in group_citations(result.get('citations', [])):

@@ -181,6 +181,34 @@ def main(directory):
     # Old completed base-query rows are preserved, not overwritten/downgraded.
     check.assertEqual([d.document_rcept_no for d in shared_ledger.get(selected.rcept_no, '위험').documents],
                       [selected.rcept_no])
+    # Production ZIP parser -> durable source notes -> actual Chroma -> LangGraph.
+    # The supplied invalid title is reproduced; the full real filing is unavailable.
+    from io import BytesIO
+    from zipfile import ZipFile
+    from unittest.mock import Mock
+    from dart_insight.services.original_documents import OpenDartSource
+    output = BytesIO()
+    with ZipFile(output, 'w') as archive:
+        archive.writestr('1.xml', '<DOCUMENT><P>사업 위험: 환율 변동 위험.</P><P>< TV 시장점유율 추이 ></P></DOCUMENT>')
+        archive.writestr('2.xml', '<DOC>테스트 전용 두 번째 XML 본문</DOC>')
+        archive.writestr('3.xml', '<DOC>테스트 전용 세 번째 XML 본문</DOC>')
+    client = Mock()
+    client.list_disclosures.return_value = [selected]
+    client._request.return_value.content = output.getvalue()
+    repaired_docs = open_document_collection(directory / 'repaired-db', LOCAL_MODEL)
+    repaired_ledger = CollectionLedger(directory / 'repaired.sqlite3')
+    repaired = RagService(settings, metadata, repaired_docs, enc, repaired_ledger,
+                          OpenDartSource(settings, client), LLM())
+    fixed_result = repaired.ask(selected, '위험은 무엇인가?')
+    check.assertTrue(fixed_result['audit']['parse_notes'])
+    check.assertTrue(fixed_result['citations'])
+    all_text = '\n'.join(repaired_docs.get(include=['documents'])['documents'])
+    check.assertIn('< TV 시장점유율 추이 >', all_text)
+    check.assertIn('세 번째 XML 본문', all_text)
+    original_requests = client._request.call_count
+    repeated = repaired.ask(selected, '위험은 무엇인가?')
+    check.assertEqual(client._request.call_count, original_requests)
+    check.assertEqual(repeated['audit']['parse_notes'], fixed_result['audit']['parse_notes'])
     print('RAG_INTEGRATION_PASSED: persistent Chroma, ledger resume, LangGraph, citations, isolation, rechunking')
 
 

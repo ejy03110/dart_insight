@@ -39,3 +39,11 @@ def separate_legacy_analysis(histories, analyses, analysis_question):
         if latest is not None:
             analyses.setdefault(receipt, latest)
             histories[receipt] = kept
+
+
+def render_copy_option(text):
+    """Use Streamlit's supported code-block clipboard button, with no custom JS."""
+    import streamlit as st
+    with st.expander('전체 답변 복사'):
+        st.caption('오른쪽 위 복사 아이콘을 누르면 아래 텍스트 전체가 클립보드에 복사됩니다.')
+        st.code(text, language=None, wrap_lines=True)

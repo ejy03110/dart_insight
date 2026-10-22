@@ -39,9 +39,20 @@ class DocumentCandidate:
 class CollectedDocument(DocumentCandidate):
     text: str
     collected_at: str
+    parse_notes: tuple[str, ...] = ()
+
+    def to_dict(self):
+        value = super().to_dict()
+        if not self.parse_notes:
+            # Retain the legacy JSON shape and idempotent ledger comparisons.
+            value.pop('parse_notes', None)
+        return value
 
     def __post_init__(self):
         super().__post_init__()
+        if not isinstance(self.parse_notes, (tuple, list)) or any(not isinstance(n, str) for n in self.parse_notes):
+            raise ValueError("XML 보정 안내는 문자열 목록이어야 합니다.")
+        object.__setattr__(self, 'parse_notes', tuple(self.parse_notes))
         if not isinstance(self.text, str) or not self.text.strip():
             raise ValueError("수집한 문서 본문이 필요합니다.")
         try:

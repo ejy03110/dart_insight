@@ -63,6 +63,16 @@ def _xml_text(raw, diagnostic):
            if not part.startswith(('<![CDATA[', '<!--'))):
         raise DartError('XML 엔티티 선언은 안전상 허용하지 않습니다.', 'document_entity')
     counts = {'named_entities': 0, 'bare_ampersands': 0}
+    repairs = []
+
+    def literal_title(match):
+        label = match['label']
+        # Only the observed DART form: a standalone, whitespace-delimited Korean
+        # title inside P/SPAN. Never reinterpret tags, attributes or arbitrary XML.
+        if not re.search(r'[가-힣]', label) or not re.search(r'\S[ \t]+\S', label.strip()):
+            return match[0]
+        repairs.append(label[:200])
+        return match['opening'] + '&lt;' + label + '&gt;' + match['closing']
 
     def replace_entity(match):
         name = match[1]
@@ -77,12 +87,18 @@ def _xml_text(raw, diagnostic):
     normalized = []
     for part in fragments:
         if not part.startswith(('<![CDATA[', '<!--')):
+            part = re.sub(
+                r'(?P<opening><(?P<tag>P|SPAN)(?:\s+[^<>]*?)?>[ \t]*)'
+                r'<(?P<label>[ \t]+[^<>\r\n=\"\'/]{1,300}[ \t]+)>'
+                r'(?P<closing>[ \t]*</(?P=tag)\s*>)', literal_title, part)
             part = re.sub(r'&([A-Za-z][A-Za-z0-9]*);', replace_entity, part)
             part, count = re.subn(r'&(?!\#(?:[0-9]+|x[0-9a-fA-F]+);|[A-Za-z_:][\w.:-]*;)', '&amp;', part)
             counts['bare_ampersands'] += count
         normalized.append(part)
     decoded = ''.join(normalized)
     diagnostic['normalizations'] = counts
+    diagnostic['literal_title_repairs'] = len(repairs)
+    diagnostic['repair_examples'] = ['<' + label + '>' for label in repairs[:5]]
     root = ElementTree.fromstring(decoded)
     return '\n'.join(t.strip() for t in root.itertext() if t.strip())
 
@@ -91,7 +107,7 @@ def parse_document_zip(content, *, diagnostics=None):
     """Bounded in-memory ZIP reading and strict XML after narrow entity repair.
 
     diagnostics contains only member numbers, sizes, encoding, repair counts and
-    curated errors. It never contains document text or raw provider exceptions.
+    curated errors plus short repaired-title examples. No full body or raw exceptions.
     """
     if len(content) > MAX_BYTES:
         raise DartError('공시 ZIP 다운로드 크기가 100 MiB 제한을 초과했습니다.', 'document_size')
@@ -111,7 +127,7 @@ def parse_document_zip(content, *, diagnostics=None):
                 raise DartError('공시 ZIP의 XML 파일 수가 1,000개 제한을 초과했습니다.', 'document_size')
             if sum(i.file_size for i in files) > MAX_BYTES:
                 raise DartError('공시 ZIP의 XML 압축 해제 크기가 100 MiB 제한을 초과했습니다.', 'document_size')
-            parts, total = [], 0
+            parts, total, failures = [], 0, []
             for number, info in enumerate(sorted(files, key=lambda i: i.filename), 1):
                 diagnostic = {'xml_number': number, 'uncompressed_bytes': info.file_size}
                 if diagnostics is not None:
@@ -126,16 +142,25 @@ def parse_document_zip(content, *, diagnostics=None):
                     text = _xml_text(raw, diagnostic)
                 except UnicodeError:
                     diagnostic['error'] = 'unsupported_encoding'
-                    raise DartError(f'공시 XML #{number}: 문자 인코딩을 해석할 수 없습니다.', 'document_encoding') from None
+                    failures.append(DartError(f'공시 XML #{number}: 문자 인코딩을 해석할 수 없습니다.', 'document_encoding'))
+                    continue
                 except (ElementTree.ParseError, DefusedXmlException) as exc:
                     line, column = getattr(exc, 'position', (0, 0))
                     kind = '정의되지 않은 XML 엔티티' if 'undefined entity' in str(exc) else 'XML 구문 오류'
                     diagnostic.update(error='xml_syntax', line=line, column=column)
-                    raise DartError(f'공시 XML #{number}: {kind} (행 {line}, 열 {column}). '
-                                    '원문 ZIP을 보존해 로컬 진단 명령으로 확인해 주세요.', 'document_xml') from None
+                    failures.append(DartError(f'공시 XML #{number}: {kind} (행 {line}, 열 {column}). '
+                                              '원문 ZIP을 보존해 로컬 진단 명령으로 확인해 주세요.', 'document_xml'))
+                    continue
+                except DartError as exc:
+                    diagnostic['error'] = exc.code
+                    failures.append(exc)
+                    continue
                 diagnostic['text_characters'] = len(text)
                 if text:
                     parts.append(text)
+            if failures:
+                raise DartError(f'{len(files)}개 XML 검사 중 {len(failures)}개 오류. 부분 추출 결과는 사용하지 않습니다. '
+                                f'{failures[0]}', failures[0].code)
             text = '\n\n'.join(parts)
             if not text.strip():
                 raise DartError('공시 ZIP의 XML에 추출 가능한 본문이 없습니다.', 'document_empty')
@@ -191,7 +216,8 @@ class OpenDartSource:
         try:
             content = response.content
             try:
-                text = parse_document_zip(content)
+                diagnostics = []
+                text = parse_document_zip(content, diagnostics=diagnostics)
             except DartError as exc:
                 # Preserve only bounded ZIP bytes, never an authenticated URL or
                 # a raw error response. Existing files/data are never replaced.
@@ -209,7 +235,11 @@ class OpenDartSource:
         finally:
             response.close()
         return CollectedDocument(**candidate.to_dict(), text=text,
-                                 collected_at=datetime.now(timezone.utc).isoformat())
+                                 collected_at=datetime.now(timezone.utc).isoformat(),
+                                 parse_notes=tuple(
+                                     f"XML #{d['xml_number']}: 제목형 꺾쇠 텍스트 {d['literal_title_repairs']}건 문자 보존 복구. "
+                                     f"이 보정으로 삭제한 본문·생략한 XML 없음. 예: {', '.join(d['repair_examples'])}"
+                                     for d in diagnostics if d.get('literal_title_repairs')))
 
 
 class BundleSource:
@@ -248,4 +278,5 @@ class BundleSource:
         doc = self.documents.get(candidate.document_rcept_no)
         if doc is None or doc.corp_code != candidate.corp_code:
             raise DartError("문서 묶음에 선택한 공시 원문이 없습니다. 실제 원문을 준비해 주세요.", "bundle")
-        return CollectedDocument(**candidate.to_dict(), text=doc.text, collected_at=doc.collected_at)
+        return CollectedDocument(**candidate.to_dict(), text=doc.text, collected_at=doc.collected_at,
+                                 parse_notes=doc.parse_notes)

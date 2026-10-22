@@ -149,3 +149,19 @@ class RagUiTests(unittest.TestCase):
             self.assertTrue(any('제출연도' in c.value for c in app.caption))
             self.assertTrue(any('조건에 맞는 결과가 없습니다' in i.value for i in app.info))
             self.assertFalse(any('본문 수치' in i.value for i in app.info))
+
+    def test_recovery_notes_and_supported_copy_ui_are_visible_after_analysis_and_rerun(self):
+        def answer(selected, question, progress):
+            result = self.answer(selected, question, progress)
+            result['audit']['parse_notes'] = ['XML #1: < TV 시장점유율 추이 > 문자 보존 복구. 삭제한 본문 없음.']
+            return result
+        self.service.ask.side_effect = answer
+        app = AppTest.from_file(APP, default_timeout=10).run()
+        app.button(key='run_analysis').click().run()
+        self.assertTrue(any('제목 표기' in w.value for w in app.warning))
+        self.assertTrue(any('< TV 시장점유율 추이 >' in t.value for t in app.text))
+        self.assertTrue(any('사업보고서 답변 [근거 1]' in code.value for code in app.code))
+        calls = self.service.ask.call_count
+        app.run()
+        self.assertEqual(self.service.ask.call_count, calls)
+        self.assertTrue(any('제목 표기' in w.value for w in app.warning))

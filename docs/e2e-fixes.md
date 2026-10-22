@@ -1,5 +1,7 @@
 # Windows E2E 오류 수정 Q-01~Q-08
 
+Q-07의 실제 6263행 진단 및 Q-10 복사 문제 후속 결과는 [q07-q10-followup.md](q07-q10-followup.md)를 우선 확인한다. 아래 Q-07 원인 미확정 기록은 이전 작업 시점의 상태다.
+
 기준 커밋 `f173276`, 작업 브랜치 `feat/required-rag-integration`.
 공식 PDF F2001~F2012만 대상으로 하며 F2013~F2016을 추가하지 않는다.
 

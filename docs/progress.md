@@ -1,5 +1,25 @@
 # DART Insight 진행 현황
 
+## Q-07 실제 제목형 XML / Q-10 복사 후속 수정 (2026-10-22 KST)
+
+- 사용자 제공 실제 ZIP 발췌로 원인 확인: `20250311001085`, UTF-8 첫 XML 6,298,681바이트/총 3개,
+  6263행 `<P>< TV 시장점유율 추이 ></P>`가 XML 태그 문법을 위반한다. 회귀 입력에서 행 6263/열 4 재현.
+- 정상 P/SPAN의 단독 한글 다단어 제목에 한해 꺾쇠를 문자로 보존하는 제한적 보정.
+  정상 태그/CDATA/주변 수치 보존, 모든 XML 검사, 추가 손상 시 부분 본문 반환/색인 거절.
+  100 MiB·1,000개·엔티티/원격 DTD/ZIP 경로 제한 유지.
+- 보정 내역은 선택 필드 parse_notes로 원장/재질문/분석·채팅에 유지. 빈 필드는 기존 JSON 형태를 유지하며
+  SQLite 스키마·기존 완료 행을 바꾸지 않는다. inspect_document에 --show-repairs/--text-output 추가(새 UTF-8 파일만).
+- Q-10: 공식 client.toolbarMode=viewer 설정으로 개발자 캐시 삭제 메뉴/단축키 경로 차단.
+  localhost auto의 일반 c 팝업은 실제 Chromium 재현. Linux 정상 Ctrl+C 오작동 자체는 재현되지 않아 Windows와 구분.
+  분석/채팅에 st.code 기본 복사 아이콘 추가. 임의 JavaScript 키 이벤트 가로채기 없음.
+- **전체 142개 통과 / 실패 0 / skip 0**, 15.443초 (기존 135 + 신규 7). 실제 임시 Chroma/SQLite/LangGraph에서
+  복구 텍스트→색인→근거→답변·안내 유지 검증. HTTP/LLM/BGE는 Mock.
+- Linux Chromium 154 실제 클립보드: 선택/미선택 Ctrl+C, 두 복사 아이콘의 한글/줄바꿈 내용 일치,
+  일반 c 팝업 없음·resource cache 유지 확인. Playwright는 /tmp 별도 환경에만 설치, 운영 의존성 변경 없음.
+- **전체 실제 ZIP·나머지 XML 내용·실제 OpenDART/BGE/GMS·Windows 브라우저는 미검증**.
+  클라우드에는 해당 ZIP·API 키·1,065건 DB가 없다. 사용자 제공 발췌와 테스트 fixture를 전체 실제 파일 검증으로 간주하지 않는다.
+- 재검증 명령/근거: [q07-q10-followup.md](q07-q10-followup.md). 기존 .env/Chroma/SQLite/모델 데이터 삭제 없음.
+
 ## Windows E2E Q-01~Q-08 수정 (2026-10-22 KST)
 
 - 사용자 실제 검증 보고: Windows 앱 실행·기존 메타데이터 1,065건 인식·임원 공시 분석/채팅·출처·공시별 기록 복귀·자연어 탐색/선택 등을 확인했다고 보고받았다.

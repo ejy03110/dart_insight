@@ -98,6 +98,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m unittest discover -s
 
 필요 도메인은 설치 시 PyPI/PyTorch, 실제 수집 시 `opendart.fss.or.kr`, 원문 링크 `dart.fss.or.kr`, LLM `gms.ssafy.io`, 최초 모델 다운로드 시 `huggingface.co` 및 배포 CDN입니다. 이번 클라우드는 키 미설정·일부 목적지 프록시 403으로 **실제 1,065건 E2E·모델 추론은 미검증**입니다. 환경 초안 저장과 게시·런타임 반영은 별개입니다.
 
+- [Q-07 실제 제목형 XML 오류·Q-10 복사 후속 수정](docs/q07-q10-followup.md)
 - [Windows E2E Q-01~Q-08 수정·사업보고서 ZIP 진단·재검증](docs/e2e-fixes.md)
 - [공식 PDF 대조표·설계·실검증 체크리스트](docs/required-integration.md)
 - [최신 진행 현황](docs/progress.md), [검증 기록](docs/validation.md)

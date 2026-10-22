@@ -88,7 +88,8 @@ class RagService:
             self.ledger.mark_indexed(selected.rcept_no, record_query)
             audits.append(plan or {'query': query, 'selected_ids': [d.document_rcept_no for d in row.documents],
                                    'rejected_ids': []})
-        return {'queries': queries, 'selection': audits}
+        notes = list(dict.fromkeys(note for doc in cached_docs.values() for note in doc.parse_notes))
+        return {'queries': queries, 'selection': audits, 'parse_notes': notes}
 
     def ask(self, selected, question, progress=lambda _: None):
         audit = self.prepare(selected, question, progress)
