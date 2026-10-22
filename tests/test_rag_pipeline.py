@@ -164,7 +164,8 @@ class GmsTests(unittest.TestCase):
                 self.client.json('x', {}, lambda v: selected_ids(v, {ITEM}))
             self.assertEqual(self.session.post.call_count, 3)
 
-    def test_transport_and_auth_errors_never_echo_secrets(self):
+    @patch('dart_insight.rag.llm.time.sleep')
+    def test_transport_and_auth_errors_never_echo_secrets(self, sleep):
         self.session.post.side_effect = requests.Timeout('test-only-key')
         with self.assertRaises(LLMError) as caught:
             self.client.json('x', {}, lambda v: v)

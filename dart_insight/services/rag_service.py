@@ -5,6 +5,7 @@ from dart_insight.diagnostics import measure, logger
 from dart_insight.data.collection_ledger import normalize_query
 from dart_insight.data.documents import DocumentCandidate
 from dart_insight.rag.pipeline import build_graph
+from dart_insight.rag.query_extraction import QueryExtractionError
 from dart_insight.rag.prompts.selection import SELECTION_PROMPT, selected_ids
 from dart_insight.rag.retrieval import retrieve
 from dart_insight.services.candidate_search import search_candidates
@@ -20,9 +21,18 @@ class RagService:
     def prepare(self, selected, question, progress=lambda _: None):
         progress('외부 문서 검색어 생성 중')
         queries = self.ledger.question_queries(selected.rcept_no, question)
+        query_fallback = None
         if queries is None:
-            queries = list(dict.fromkeys([*self.llm.extract(selected, question), selected.rcept_no]))
-            self.ledger.question_queries(selected.rcept_no, question, queries)
+            try:
+                queries = list(dict.fromkeys([*self.llm.extract(selected, question), selected.rcept_no]))
+            except QueryExtractionError as exc:
+                query_fallback = {'category': exc.category, 'http_status': exc.status}
+                queries = list(dict.fromkeys([question.strip(), selected.rcept_no]))
+                progress('검색어 추출 실패로 원래 질문과 접수번호로 검색을 계속합니다. ' + str(exc))
+                logger.warning('stage=query_fallback category=%s http_status=%s', exc.category, exc.status)
+                # Retry extraction next run; fallback is not a successful LLM result.
+            else:
+                self.ledger.question_queries(selected.rcept_no, question, queries)
         cached_docs = self.ledger.documents_for_item(selected.rcept_no)
         logger.info('stage=document_cache reusable_documents=%s', len(cached_docs))
         audits = []
@@ -102,7 +112,7 @@ class RagService:
             audits.append(plan or {'query': query, 'selected_ids': [d.document_rcept_no for d in row.documents],
                                    'rejected_ids': []})
         notes = list(dict.fromkeys(note for doc in cached_docs.values() for note in doc.parse_notes))
-        return {'queries': queries, 'selection': audits, 'parse_notes': notes}
+        return {'queries': queries, 'selection': audits, 'parse_notes': notes, 'query_fallback': query_fallback}
 
     def ask(self, selected, question, progress=lambda _: None):
         audit = self.prepare(selected, question, progress)

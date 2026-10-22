@@ -89,14 +89,15 @@ class QueryExtractionTests(unittest.TestCase):
             self.assertEqual(self.session.post.call_count, 1)
             response.close.assert_called_once()
 
-    def test_http_and_transport_errors_are_safe_and_not_retried(self):
+    @patch("dart_insight.rag.query_extraction.time.sleep")
+    def test_http_and_transport_errors_follow_transient_retry_policy(self, sleep):
         for status in (302, 401, 403, 429, 500):
             with self.subTest(status=status):
                 self.session.reset_mock()
                 self.session.post.return_value = Mock(status_code=status)
                 with self.assertRaises(QueryExtractionError):
                     self.extract()
-                self.assertEqual(self.session.post.call_count, 1)
+                self.assertEqual(self.session.post.call_count, 3 if status in (429, 500) else 1)
         self.session.post.side_effect = requests.Timeout("test-gms-key secret response")
         with self.assertRaises(QueryExtractionError) as caught:
             self.extract()

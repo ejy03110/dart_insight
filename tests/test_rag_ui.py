@@ -165,3 +165,17 @@ class RagUiTests(unittest.TestCase):
         app.run()
         self.assertEqual(self.service.ask.call_count, calls)
         self.assertTrue(any('제목 표기' in w.value for w in app.warning))
+
+    def test_query_fallback_warning_is_preserved_with_analysis_without_reexecution(self):
+        def answer(selected, question, progress):
+            result = self.answer(selected, question, progress)
+            result['audit']['query_fallback'] = {'category': 'timeout', 'http_status': None}
+            return result
+        self.service.ask.side_effect = answer
+        app = AppTest.from_file(APP, default_timeout=10).run()
+        app.button(key='run_analysis').click().run()
+        self.assertTrue(any('원래 질문' in w.value for w in app.warning))
+        calls = self.service.ask.call_count
+        app.run()
+        self.assertEqual(self.service.ask.call_count, calls)
+        self.assertTrue(any('원래 질문' in w.value for w in app.warning))

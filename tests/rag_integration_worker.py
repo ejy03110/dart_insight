@@ -215,6 +215,43 @@ def main(directory):
     repeated = repaired.ask(selected, '위험은 무엇인가?')
     check.assertEqual(client._request.call_count, original_requests)
     check.assertEqual(repeated['audit']['parse_notes'], fixed_result['audit']['parse_notes'])
+    # Query-only fallback retains original question, real retrieval and final validation.
+    from dart_insight.rag.query_extraction import QueryExtractionError
+    class FallbackLLM(LLM):
+        failure_category = 'timeout'
+        def extract(self, selected, question):
+            self.extract_calls += 1
+            raise QueryExtractionError('GMS 검색어 추출 실패', category=self.failure_category)
+    fallback_llm = FallbackLLM()
+    fallback_service = RagService(settings, metadata, repaired_docs, enc, repaired_ledger,
+                                   OpenDartSource(settings, client), fallback_llm)
+    fallback_question = 'fallback 위험 질문'
+    updates = []
+    fallback_result = fallback_service.ask(selected, fallback_question, updates.append)
+    check.assertEqual(fallback_result['audit']['queries'], [fallback_question, selected.rcept_no])
+    check.assertEqual(fallback_result['audit']['query_fallback']['category'], 'timeout')
+    check.assertTrue(fallback_result['citations'])
+    check.assertTrue(any('원래 질문' in update for update in updates))
+    check.assertIsNone(repaired_ledger.question_queries(selected.rcept_no, fallback_question))
+    check.assertEqual(client._request.call_count, original_requests)  # Parsed body reused.
+    for category in ('network', 'rate_limit', 'server', 'json_syntax', 'schema', 'envelope', 'empty_content'):
+        fallback_llm.failure_category = category
+        fallback_case = fallback_service.ask(selected, fallback_question)
+        check.assertEqual(fallback_case['audit']['query_fallback']['category'], category)
+        check.assertTrue(fallback_case['citations'])
+        check.assertIsNone(repaired_ledger.question_queries(selected.rcept_no, fallback_question))
+    class InvalidCitationLLM(FallbackLLM):
+        def json(self, system, payload, validate):
+            if 'evidence' in payload:
+                return validate({'answer': '허위 인용 [근거 999999]', 'supported': True})
+            return super().json(system, payload, validate)
+    fallback_service.llm = InvalidCitationLLM()
+    with check.assertRaises(ValueError):
+        fallback_service.ask(selected, fallback_question)
+    fallback_service.llm = LLM()
+    recovered = fallback_service.ask(selected, fallback_question)
+    check.assertIsNone(recovered['audit']['query_fallback'])
+    check.assertIsNotNone(repaired_ledger.question_queries(selected.rcept_no, fallback_question))
     print('RAG_INTEGRATION_PASSED: persistent Chroma, ledger resume, LangGraph, citations, isolation, rechunking')
 
 

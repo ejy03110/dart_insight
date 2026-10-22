@@ -1,5 +1,22 @@
 # DART Insight 진행 현황
 
+## GMS 전체 호출 경로 통합 안정화 (2026-10-22 UTC)
+
+- 검색어 추출/후보 선별/답변 생성의 HTTP 처리를 작은 공통 post_chat 함수로 통합.
+  401/403 인증, 404 모델/경로, 429 한도, 5xx 서버, timeout/network, 400/기타 요청 오류를 구분한다.
+  HTTP/통신/출력 실패를 합쳐 호출당 최대 3회, 일시 실패만 1/2초 backoff. 모든 응답 자원 해제.
+  공급자 코드/파라미터는 고정 allowlist만 표시하고 원문·키·임의 에러 메시지는 출력하지 않는다.
+- 검색어 QueryExtractionError만 원래 질문+접수번호로 fallback. 원장에 추출 성공으로 저장하지 않으며
+  다음 실행에서 재시도하고 UI/audit에 사용 사실을 유지한다. 후보 선별/최종 스키마·근거 검증은 우회하지 않는다.
+  동일 인증/모델/요청 설정 오류는 후속 GMS 호출 없이 중단한다. 새 extract는 차단 상태를 초기화한다.
+- 전체 **165개 통과 / 실패 0 / skip 0**, 13.879초(기존 157 + 신규 8). pip check 정상.
+  Mock 상태별 정상/복구/소진/혼합 총예산/비노출, 실제 임시 Chroma/SQLite/LangGraph fallback·허위 인용 거절·
+  정상 추출 복구·본문 재사용, AppTest 경고 유지 검증. 기존 HTTP 즉시 실패 테스트는 새 재시도 정책으로 갱신.
+- 실제 Windows의 최근 추출 오류 HTTP 상태/응답은 제공되지 않아 원인 미확정.
+  실제 GMS/OpenDART/BGE·Windows 브라우저는 미검증. .env/Chroma/SQLite/사용자 데이터 변경·삭제 없음.
+- 최신 정책·Windows 재검증·남은 인증/모델/자원 장애 요인: [gms-recovery.md](gms-recovery.md).
+
+
 ## 실제 GMS 검증 로그 후속 진단 (2026-10-22 UTC)
 
 - 사용자 실제 HTTP 200/finish=stop/schema_or_grounding 로그는 JSON 해석 후 콜백 검증 실패를 뜻한다.

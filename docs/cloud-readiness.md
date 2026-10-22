@@ -113,3 +113,5 @@ XML 진단·공시별 기록 복원·분석/채팅 분리·인용 링크·복사
 OOM/재시작 반복이면 배포 성공으로 판정하지 않는다.
 
 실제 200/stop 검증 실패의 field/rule별 후속 로그: [gms-validation-diagnostics.md](gms-validation-diagnostics.md).
+
+검색어/답변 공통 HTTP 정책과 검색어 전용 fallback의 최신 절차: [gms-recovery.md](gms-recovery.md).

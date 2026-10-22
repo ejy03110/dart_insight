@@ -8,7 +8,8 @@ from dart_insight.config import ConfigurationError
 from dart_insight.diagnostics import logger, measure
 from dart_insight.rag.response import response_value, ResponseError
 from dart_insight.rag.validation import OutputValidationError
-from dart_insight.rag.query_extraction import GMS_CHAT_URL, extract_queries
+from dart_insight.rag.query_extraction import GMS_CHAT_URL, extract_queries, QueryExtractionError
+from dart_insight.rag.transport import GmsRequestError, post_chat
 
 
 class LLMError(ValueError):
@@ -21,6 +22,7 @@ class GmsClient:
         self.session = session or requests.Session()
         self.owned = session is None
         self.last_call = 0.0
+        self._terminal_extraction_error = None
 
     def close(self):
         if self.owned:
@@ -33,13 +35,21 @@ class GmsClient:
         self.last_call = time.monotonic()
 
     def extract(self, selected, question):
+        self._terminal_extraction_error = None
         self._wait()
         try:
             return extract_queries(selected, question, self.settings, session=self.session)["queries"]
+        except QueryExtractionError as exc:
+            if exc.category in ('authentication', 'not_found', 'request'):
+                self._terminal_extraction_error = str(exc)
+            raise
         finally:
             self.last_call = time.monotonic()
 
     def json(self, system, payload, validate):
+        operation = '최종 답변 생성' if 'evidence' in payload else '후보 선별'
+        if self._terminal_extraction_error:
+            raise LLMError('GMS ' + operation + ' 중단: 같은 요청의 검색어 추출에서 복구 불가능한 설정 오류가 확인되었습니다. ' + self._terminal_extraction_error)
         if not self.settings.openai_api_key:
             raise ConfigurationError("GMS API 키를 OPENAI_API_KEY에 설정해 주세요.")
         messages = [{"role": "system", "content": system},
@@ -47,22 +57,13 @@ class GmsClient:
         for attempt in range(3):
             self._wait()
             try:
-                with measure('gms_http', attempt=attempt + 1):
-                    response = self.session.post(
-                        GMS_CHAT_URL, headers={"Authorization": f"Bearer {self.settings.openai_api_key}"},
-                        json={"model": self.settings.chat_model, "messages": messages,
-                              "response_format": {"type": "json_object"},
-                              "max_completion_tokens": self.settings.gms_max_output_tokens},
-                        timeout=self.settings.timeout_seconds, allow_redirects=False)
-            except requests.RequestException:
-                raise LLMError("GMS 연결 실패: 네트워크·시간 제한을 확인해 주세요.") from None
-            try:
-                logger.info('stage=gms_http http_status=%s attempt=%s', response.status_code, attempt + 1)
-                if response.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                response = post_chat(self.session, self.settings, messages, 'gms_http', attempt)
+            except GmsRequestError as exc:
+                if exc.retryable and attempt < 2:
                     time.sleep(min(2 ** attempt, 4))
                     continue
-                if response.status_code != 200:
-                    raise LLMError("GMS 요청 실패: 인증·모델 권한·호출 한도를 확인해 주세요.")
+                raise LLMError('GMS ' + operation + ' 실패: ' + str(exc)) from None
+            try:
                 try:
                     with measure('gms_validation', attempt=attempt + 1):
                         parsed = response_value(response)
@@ -92,7 +93,7 @@ class GmsClient:
                             'grounding': '근거에 없는 취득 목적 생성 방지 규칙을 통과하지 못했습니다.',
                             'validator_internal': '검증기 내부 오류가 발생했습니다. 서버 로그의 exception/rule을 확인하세요.',
                         }.get(exc.category, '정상 JSON 답변을 받지 못했습니다. 모델 설정을 확인하세요.')
-                        raise LLMError('GMS 응답 오류 [' + exc.category + ']: ' + guidance) from None
+                        raise LLMError('GMS ' + operation + ' 응답 오류 [' + exc.category + ']: ' + guidance) from None
                     messages = [*messages[:2], {'role': 'user', 'content':
                         '이전 응답의 형식 또는 근거 검증에 실패했습니다. 시스템의 JSON 스키마와 근거 번호 규칙을 정확히 지켜 전체 JSON 객체만 반환하세요.'}]
                     continue

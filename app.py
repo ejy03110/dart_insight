@@ -150,6 +150,8 @@ separate_legacy_analysis(histories, analyses, ANALYSIS_QUESTION)
 def render_result(result):
     st.markdown(result['content'])
     render_copy_option(result['content'])
+    if result.get('audit', {}).get('query_fallback'):
+        st.warning('검색어 추출에 실패하여 원래 질문으로 검색했습니다. 최종 답변은 기존 근거 검증을 통과한 결과입니다.')
     notes = result.get('audit', {}).get('parse_notes', [])
     if notes:
         st.warning('원문 XML의 제목 표기·문자 엔티티를 문자 보존 방식으로 보정했습니다. 아래 보정 내역을 확인하세요.')
