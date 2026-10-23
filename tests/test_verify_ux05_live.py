@@ -11,6 +11,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+REAL_RUN=subprocess.run
+
 SPEC=importlib.util.spec_from_file_location('live_probe',Path(__file__).resolve().parents[1]/'scripts/verify_ux05_live.py')
 probe=importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(probe)
@@ -25,12 +27,12 @@ class LiveProbeCleanupTests(unittest.TestCase):
 import json, pathlib, sys
 root=pathlib.Path(sys.argv[1])
 """+worker+"""
-report={'status':'verified','runs':[
+report={'status':'verified','timings':{'first_analysis_seconds':0.1,'repeat_analysis_seconds':0.01},'runs':[
  {'kind':'initially_unindexed','status':'passed'},
  {'kind':'already_indexed','status':'passed'}]}
 (root/'result.json').write_text(json.dumps(report),encoding='utf-8')
 """
-            return subprocess.run([sys.executable,'-c',code,str(self.directory)],**kwargs)
+            return REAL_RUN([sys.executable,'-c',code,str(self.directory)],**kwargs)
         with tempfile.TemporaryDirectory() as directory:
             output=Path(directory)/'report.json'
             try:
@@ -38,7 +40,8 @@ report={'status':'verified','runs':[
                     stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                     if cleanup_error:
                         stack.enter_context(patch.object(probe.shutil,'rmtree',side_effect=PermissionError('SECRET_PROVIDER_RESPONSE')))
-                    result=probe.run_isolated([],output,runner=runner)
+                    stack.enter_context(patch.object(probe.subprocess,'run',side_effect=runner))
+                    result=probe.run_isolated([],output)
                 report=json.loads(output.read_text(encoding='utf-8'))
                 return result,report,self.directory.exists()
             finally:
@@ -90,7 +93,8 @@ else:
             return subprocess.CompletedProcess(command,1)
         with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
             output=Path(directory)/'report.json'
-            self.assertEqual(probe.run_isolated([],output,runner=crash),1)
+            with patch.object(probe.subprocess,'run',side_effect=crash):
+                self.assertEqual(probe.run_isolated([],output),1)
             report=json.loads(output.read_text(encoding='utf-8'))
             self.assertEqual(report['error_stage'],'worker_exit')
             self.assertEqual(report['status'],'failed')
@@ -102,5 +106,6 @@ else:
             return subprocess.CompletedProcess(command,0)
         with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
             output=Path(directory)/'report.json'
-            self.assertEqual(probe.run_isolated([],output,runner=incomplete),1)
+            with patch.object(probe.subprocess,'run',side_effect=incomplete):
+                self.assertEqual(probe.run_isolated([],output),1)
             self.assertEqual(json.loads(output.read_text(encoding='utf-8'))['status'],'failed')

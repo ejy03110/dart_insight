@@ -4,16 +4,15 @@ import streamlit as st
 
 from dart_insight.config import ConfigurationError, DISCLAIMER, load_settings
 from dart_insight.data.models import COMPANIES
-from dart_insight.opendart.client import DartError
 from dart_insight.rag.prompts.answer import ANALYSIS_QUESTION
 from dart_insight.services.runtime import Runtime, list_disclosures, open_store, analysis_readiness
-from dart_insight.rag.llm import LLMError
-from dart_insight.rag.query_extraction import QueryExtractionError
 from dart_insight.ui.chat import history_for, save_turn, group_citations, separate_legacy_analysis, render_copy_option
 from dart_insight.ui.layout import apply_theme, render_hero, render_disclosure_header
 from dart_insight.ui.diagnostics import render_diagnostics
 from dart_insight.ui import admin_auth, routes
 from dart_insight.ui.recent import recent_controls
+from dart_insight.ui.analysis_diagnostics import (PHASES, HINTS, BriefingEvidenceError,
+    failure as analysis_failure, emit as emit_failure, home_retry_allowed)
 from dart_insight.vectorstore.metadata import MetadataIndexError
 
 operations = logging.getLogger("dart_insight.operations")
@@ -192,7 +191,7 @@ def render_turn(turn, *, company=None):
             st.markdown(turn['content'])
 
 
-def run_question(question, *, history=None, target):
+def run_question(question, *, history=None, target, origin='followup'):
     if not settings.openai_api_key:
         st.error('AI 분석을 이용하려면 서비스 인증 설정이 필요합니다. 관리자에게 문의해 주세요.')
         return None
@@ -200,6 +199,14 @@ def run_question(question, *, history=None, target):
         st.error('공시 원문에 연결할 수 없습니다. 관리자에게 연결 설정 확인을 요청해 주세요.')
         return None
     last_stage = 'start'
+    failures = st.session_state.setdefault('analysis_failures', {})
+    def record_failure(exc):
+        diagnostic = analysis_failure(exc, phase=last_stage, origin=origin, receipt=target.rcept_no,
+                                      attempt=st.session_state.get('analysis_run_counts', {}).get(target.rcept_no, 1))
+        failures[target.rcept_no] = diagnostic
+        emit_failure(operations, diagnostic)
+        st.error('분석을 완료하지 못했습니다. ' + HINTS[diagnostic['reason']] + ' 이전 결과와 대화는 유지됩니다.')
+        st.caption('진단 번호: ' + diagnostic['diagnostic_id'])
     status = st.status('분석을 준비하고 있습니다.', expanded=True)
     stage_text = status.empty()
     seen_labels = []
@@ -209,7 +216,7 @@ def run_question(question, *, history=None, target):
             def progress(message):
                 nonlocal last_stage, current_label
                 # Only known callback events become public text; never echo raw errors.
-                last_stage = next((phase for word, phase in (('XML', 'parse'), ('검색', 'retrieve'), ('원문', 'collect'), ('색인', 'index'), ('생성', 'generate')) if word in message), 'processing')
+                last_stage = PHASES.get(message, 'processing')
                 operations.info('ui_phase=%s', last_stage)
                 labels = {
                     '기존 본문 색인 확인 중': '저장된 공시 본문을 확인하고 있습니다.',
@@ -238,31 +245,17 @@ def run_question(question, *, history=None, target):
                     stage_text.markdown('\n\n'.join(('진행 중 · ' if item == label else '완료 · ') + item for item in seen_labels))
             with Runtime(settings, metadata, embeddings) as service:
                 result = service.ask(target, question, progress, history=history) if history else service.ask(target, question, progress)
+                last_stage = 'runtime_close'
+            last_stage = 'render'
+            if origin == 'home' and (not result.get('citations') or not result.get('answer', '').strip()):
+                raise BriefingEvidenceError()
+            failures.pop(target.rcept_no, None)
         stage_text.markdown('\n\n'.join('완료 · ' + item for item in seen_labels))
         status.update(label='분석이 완료되었습니다.', state='complete', expanded=False)
         return result
-    except (ConfigurationError, DartError, LLMError, QueryExtractionError, MetadataIndexError) as exc:
-        operations.warning('ui_request_failed phase=%s exception=%s category=%s', last_stage, type(exc).__name__,
-                           getattr(exc, 'category', 'processing'))
-        category = getattr(exc, 'category', None)
-        code = getattr(exc, 'code', '')
-        if isinstance(exc, ConfigurationError) or category == 'authentication' or code in ('010', '011', '012'):
-            hint = '서비스 인증 설정을 확인해 주세요.'
-        elif code == '014' or isinstance(code, str) and code.startswith('document'):
-            hint = '원문을 정상적으로 읽지 못해 불완전한 본문으로 분석하지 않았습니다.'
-        elif category == 'rate_limit' or code == '020':
-            hint = '호출 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.'
-        elif category in ('schema', 'citation', 'grounding', 'truncated', 'empty_content', 'json_syntax'):
-            hint = 'AI 응답의 형식 또는 근거 검증에 실패해 답변을 표시하지 않았습니다.'
-        elif isinstance(exc, MetadataIndexError):
-            hint = '색인 또는 모델 설정을 확인해 주세요. 기존 자료는 보존됩니다.'
-        else:
-            hint = '외부 서비스 연결과 호출 한도를 확인한 뒤 다시 시도해 주세요.'
-        st.error('분석을 완료하지 못했습니다. ' + hint + ' 이전 결과와 대화는 유지됩니다.')
     except Exception as exc:
-        # No raw exception, prompt, URL, or credential is copied into public output/logs.
-        operations.error('ui_request_failed phase=%s exception=%s', last_stage, type(exc).__name__)
-        st.error('처리 실패: 요청을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요. 이전 결과와 대화는 유지됩니다.')
+        # Persist only allowlisted diagnostics so rerenders keep the real reason.
+        record_failure(exc)
     stage_text.markdown('\n\n'.join(('실패 · ' if item == current_label else '완료 · ') + item for item in seen_labels))
     status.update(label='실패 단계: ' + current_label, state='error', expanded=True)
     return None
@@ -281,7 +274,7 @@ def availability(disclosure):
     return availability_cache[key]
 
 
-def render_automatic(disclosure):
+def render_automatic(disclosure, *, origin='detail'):
     from dart_insight.ui.analysis import ensure_analysis
     receipt = disclosure.rcept_no
     attempts = st.session_state.setdefault('analysis_attempts', {})
@@ -289,18 +282,51 @@ def render_automatic(disclosure):
     if receipt not in analyses and not ready:
         st.info(reason)
         return
+    failures = st.session_state.setdefault('analysis_failures', {})
+    counts = st.session_state.setdefault('analysis_run_counts', {})
     retry = False
     had_attempt = attempts.get(receipt) in ('failed', 'running')
-    if receipt not in analyses and attempts.get(receipt) in ('failed', 'running'):
+
+    def show_failure():
+        diagnostic = failures.get(receipt)
+        if diagnostic is None:
+            diagnostic = analysis_failure(None, phase='session', origin=origin, receipt=receipt)
+            diagnostic['reason'] = 'interrupted' if attempts.get(receipt) == 'running' else 'previous_failure'
+            failures[receipt] = diagnostic
+            emit_failure(operations, diagnostic)
         st.warning('이 공시의 분석이 완료되지 않았습니다. 자동 재호출하지 않습니다.')
-        retry = st.button('분석 다시 시도', key='retry_analysis_' + receipt)
-    result = ensure_analysis(receipt, analyses, attempts,
-                             lambda: run_question(ANALYSIS_QUESTION, target=disclosure), retry=retry)
+        st.info(HINTS[diagnostic['reason']])
+        st.caption('진단 번호: ' + diagnostic['diagnostic_id'])
+        allowed = origin != 'home' or home_retry_allowed(diagnostic, counts.get(receipt, 1))
+        if origin == 'home' and not allowed:
+            st.caption('홈 재시도는 일시적 오류에 한해 1회 허용합니다. 원문 또는 설정 확인이 필요한 실패는 자동 재시도하지 않습니다.')
+        return allowed
+
+    if receipt not in analyses and had_attempt:
+        if show_failure():
+            retry = st.button('분석 다시 시도', key='retry_analysis_' + receipt)
+
+    def run():
+        counts[receipt] = counts.get(receipt, 0) + 1
+        return run_question(ANALYSIS_QUESTION, target=disclosure, origin=origin)
+
+    result = ensure_analysis(receipt, analyses, attempts, run, retry=retry)
     if result is not None:
+        if origin == 'home' and (not result.get('citations') or not result.get('content', '').strip()):
+            # A detail page may have cached an honest unknown answer. Preserve it
+            # for that page, but do not present it as a completed home briefing.
+            if failures.get(receipt, {}).get('reason') != 'insufficient_evidence':
+                failures[receipt] = analysis_failure(BriefingEvidenceError(), phase='render',
+                    origin=origin, receipt=receipt, attempt=counts.get(receipt, 1))
+                emit_failure(operations, failures[receipt])
+            show_failure()
+            return
         render_result(result, company=disclosure.corp_name)
         st.caption('현재 세션에 저장된 분석입니다. 화면 전환·추가 질문으로 같은 분석을 반복하지 않습니다.')
     elif attempts.get(receipt) == 'failed' and not had_attempt:
-        st.button('분석 다시 시도', key='retry_analysis_' + receipt, on_click=lambda: attempts.pop(receipt, None))
+        if show_failure():
+            # A click is consumed on the next rerun; never clear the failed guard.
+            st.button('분석 다시 시도', key='retry_analysis_' + receipt)
 
 
 def render_analysis_view(disclosure):
@@ -343,9 +369,9 @@ if page == '홈':
     representative = by_id.get(st.session_state.get('briefing_receipt'))
     if representative:
         st.caption(f'{representative.corp_name} · {representative.report_nm} · 공시 접수일 {representative.rcept_dt}')
-        render_automatic(representative)
+        render_automatic(representative, origin='home')
         if st.session_state.get('analysis_attempts', {}).get(representative.rcept_no) == 'failed':
-            st.info('대표 공시의 준비 또는 분석에 실패했습니다. 다른 공시를 자동으로 추가 분석하지 않습니다. 위 재시도 버튼이나 기업 카드의 다른 공시를 이용해 주세요.')
+            st.info('대표 공시의 준비 또는 분석에 실패했습니다. 다른 공시를 자동으로 추가 분석하지 않습니다. 표시된 실패 이유를 확인하고, 일시적 오류는 재시도 버튼을 이용해 주세요.')
     else:
         st.info('최근 공시가 없거나 서비스 연결 설정이 없어 자동 브리핑을 실행하지 않았습니다. 공시 탐색에서 기존 공시와 원문을 확인하세요.')
     st.caption(DISCLAIMER)
