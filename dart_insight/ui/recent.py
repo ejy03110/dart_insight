@@ -1,4 +1,4 @@
-"""Recent disclosure UI. Only the explicit refresh button invokes the service."""
+"""Recent metadata UI; the home screen opts into cache-coalesced auto refresh."""
 import streamlit as st
 from dart_insight.services.recent_disclosures import RecentDisclosureService
 
@@ -8,12 +8,13 @@ def recent_service(settings):
     return RecentDisclosureService(settings)
 
 
-def recent_controls(settings):
+def recent_controls(settings, *, auto=False):
     service = recent_service(settings)
     results = service.peek()
     loaded = any(r.state != 'unloaded' for r in results.values())
     label = '최근 공시 새로고침' if loaded else '최근 공시 불러오기'
-    if st.button(label,key='load_recent'):
+    refresh = st.button(label,key='load_recent')
+    if auto or refresh:
         with st.spinner('공시를 확인하고 있습니다.'):
             results = service.refresh()
     st.caption('오늘 포함 최근 7일 · 조회 결과는 최대 5분간 재사용합니다. 조회 실패 시 1분 후 다시 시도할 수 있습니다.')

@@ -50,3 +50,30 @@ class Runtime:
     def __exit__(self, *_):
         self.source.close()
         self.llm.close()
+
+
+def analysis_readiness(settings, selected):
+    """Read existing item AND original-document scope; never create a DB or model."""
+    from pathlib import Path
+    if not settings.openai_api_key:
+        return False, 'AI 서비스 인증 설정이 없어 분석을 시작할 수 없습니다.'
+    if not settings.dart_api_key and not settings.document_bundle:
+        return False, '공시 원문 연결 설정이 없어 분석을 시작할 수 없습니다.'
+    if not (Path(settings.chroma_dir) / 'chroma.sqlite3').is_file():
+        return False, '본문 미색인 공시입니다. 원문 열람은 가능하며 AI 분석은 본문 색인 후 제공됩니다.'
+    try:
+        import chromadb
+        from chromadb.config import Settings as ChromaSettings
+        from dart_insight.vectorstore.metadata import check_collection_model
+        client = chromadb.PersistentClient(path=str(settings.chroma_dir), settings=ChromaSettings(anonymized_telemetry=False))
+        collection = client.get_collection('dart_documents', embedding_function=None)
+        check_collection_model(collection, settings.embedding_model)
+        scope = {'$and': [{'item_rcept_no': selected.rcept_no},
+                          {'document_rcept_no': selected.rcept_no},
+                          {'corp_code': selected.corp_code}]}
+        found = collection.get(where=scope, limit=1, include=['documents'])
+        if found['ids'] and any(text.strip() for text in found['documents']):
+            return True, 'AI 분석 가능 · 본문 색인 확인'
+        return False, '본문 미색인 공시입니다. 원문 열람은 가능하며 AI 분석은 본문 색인 후 제공됩니다.'
+    except Exception:
+        return False, '본문 색인 상태를 확인할 수 없습니다. 기존 자료는 보존됩니다. 관리자에게 확인해 주세요.'

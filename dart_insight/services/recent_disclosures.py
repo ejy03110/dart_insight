@@ -1,4 +1,4 @@
-"""Read-only recent metadata, isolated from RAG and indexes. Never auto-refresh."""
+"""Read-only recent metadata, isolated from RAG and indexes. Refresh is explicit and TTL-bound."""
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 import logging
@@ -62,7 +62,7 @@ class RecentDisclosureService:
             return self._snapshot(begin,end)
 
     def refresh(self):
-        """Explicit action only. Reuse fresh success/empty data and back off errors."""
+        """Refresh on caller request; coalesce automatic home loads and manual refreshes."""
         with self._lock:
             now, begin, end = self._window()
             self._results = {key:value for key,value in self._results.items() if key[1]==end}

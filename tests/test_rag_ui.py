@@ -21,19 +21,21 @@ SECOND = replace(FIRST, rcept_no='20250101000002', report_nm='감사보고서',
 
 def explore(app):
     app.radio(key='ui_section').set_value('공시 탐색').run()
-    if app.radio(key='_explore_scope').value!='보관된 공시':
-        app.radio(key='_explore_scope').set_value('보관된 공시').run()
     return app
 
 
 def open_disclosure(app, receipt):
-    explore(app)
-    app.button(key='open_' + receipt).click().run()
+    # A direct analysis URL tests the same automatic detail behavior without
+    # constraining navigation to the obsolete source-selection radio.
+    app.query_params.update(v='analysis', r=receipt)
+    app.run()
     return app
 
 
 def start_analysis():
-    return open_disclosure(AppTest.from_file(APP, default_timeout=10).run(), FIRST.rcept_no)
+    app = AppTest.from_file(APP, default_timeout=10)
+    app.query_params.update(v='analysis', r=FIRST.rcept_no)
+    return app.run()
 
 
 class RagUiTests(unittest.TestCase):
@@ -48,6 +50,9 @@ class RagUiTests(unittest.TestCase):
         self.stack.enter_context(patch('dart_insight.config.load_settings', return_value=settings))
         self.stack.enter_context(patch('dart_insight.services.runtime.open_store', return_value=(metadata, Mock())))
         self.stack.enter_context(patch('dart_insight.services.runtime.list_disclosures', return_value=[FIRST, SECOND]))
+        self.stack.enter_context(patch('dart_insight.services.runtime.analysis_readiness', return_value=(True, 'AI 분석 가능 · 본문 색인 확인')))
+        from dart_insight.services.recent_disclosures import RecentDisclosureService
+        self.stack.enter_context(patch('dart_insight.ui.recent.recent_service', return_value=RecentDisclosureService(Settings())))
         self.runtime = self.stack.enter_context(patch('dart_insight.services.runtime.Runtime'))
         self.service = self.runtime.return_value.__enter__.return_value
         self.service.ask.side_effect = self.answer
@@ -64,7 +69,7 @@ class RagUiTests(unittest.TestCase):
     def test_chat_switch_back_and_analysis_keep_item_histories_and_citations(self):
         app = start_analysis()
         self.assertEqual(len(app.exception), 0)
-        self.service.ask.assert_not_called()
+        self.service.ask.assert_called_once()
         app.chat_input[0].set_value('첫 질문').run()
         self.assertEqual(len(app.exception), 0)
         self.assertIn('[근거 1]', app.session_state['histories'][FIRST.rcept_no][1]['content'])
@@ -74,8 +79,7 @@ class RagUiTests(unittest.TestCase):
         self.assertEqual(len(app.session_state['histories'][SECOND.rcept_no]), 2)
         open_disclosure(app, FIRST.rcept_no)
         self.assertEqual(len(app.chat_message), 2)
-        app.button(key='run_analysis').click().run()
-        self.assertIn('위험 요인', self.service.ask.call_args.args[1])
+        self.assertTrue(any('위험 요인' in c.args[1] for c in self.service.ask.call_args_list))
         self.assertEqual(len(app.session_state['histories'][FIRST.rcept_no]), 2)
         self.assertIn(FIRST.rcept_no, app.session_state['analyses'])
         self.assertEqual(len(app.chat_message), 2)
@@ -109,7 +113,6 @@ class RagUiTests(unittest.TestCase):
     def test_analysis_is_separate_cached_and_restored_without_rerunning_during_chat(self):
         from dart_insight.rag.prompts.answer import ANALYSIS_QUESTION
         app = start_analysis()
-        app.button(key='run_analysis').click().run()
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(len(app.chat_message), 0)
         self.assertEqual(app.session_state['histories'][FIRST.rcept_no], [])
@@ -121,11 +124,11 @@ class RagUiTests(unittest.TestCase):
         count = self.service.ask.call_count
         open_disclosure(app, SECOND.rcept_no)
         self.assertEqual(len(app.chat_message), 0)
-        self.assertNotIn(SECOND.rcept_no, app.session_state['analyses'])
+        self.assertIn(SECOND.rcept_no, app.session_state['analyses'])
         open_disclosure(app, FIRST.rcept_no)
         self.assertEqual(app.session_state['analyses'][FIRST.rcept_no], first_analysis)
         self.assertEqual(len(app.chat_message), 2)
-        self.assertEqual(self.service.ask.call_count, count)
+        self.assertEqual(self.service.ask.call_count, count + 1)
 
     def test_duplicate_source_link_is_shown_once_with_both_chunk_numbers(self):
         def answer(selected, question, progress):
@@ -138,11 +141,11 @@ class RagUiTests(unittest.TestCase):
         self.service.ask.side_effect = answer
         app = start_analysis()
         app.chat_input[0].set_value('질문').run()
-        self.assertEqual(sum(m.value == FIRST.source_url for m in app.markdown), 1)
+        self.assertEqual(sum(m.value == FIRST.source_url for m in app.markdown), 2)  # one per answer, grouped within each
         self.assertTrue(any('[근거 2]' in c.value for c in app.caption))
         self.assertTrue(any('[근거 3]' in c.value for c in app.caption))
-        self.assertTrue(any('doc:chunk2' in c.value for c in app.caption))
-        self.assertTrue(any('doc:chunk3' in c.value for c in app.caption))
+        self.assertFalse(any('doc:chunk2' in c.value for c in app.caption))
+        self.assertFalse(any('doc:chunk3' in c.value for c in app.caption))
 
     def test_connection_date_form_and_collection_command_use_same_dates(self):
         from datetime import date
@@ -180,7 +183,6 @@ class RagUiTests(unittest.TestCase):
             return result
         self.service.ask.side_effect = answer
         app = start_analysis()
-        app.button(key='run_analysis').click().run()
         self.assertTrue(any('제목 표기' in w.value for w in app.warning))
         self.assertTrue(any('< TV 시장점유율 추이 >' in t.value for t in app.text))
         self.assertTrue(any('사업보고서 답변 [근거 1]' in code.value for code in app.code))
@@ -196,7 +198,6 @@ class RagUiTests(unittest.TestCase):
             return result
         self.service.ask.side_effect = answer
         app = start_analysis()
-        app.button(key='run_analysis').click().run()
         self.assertTrue(any('원래 질문' in w.value for w in app.warning))
         calls = self.service.ask.call_count
         app.run()
@@ -206,13 +207,12 @@ class RagUiTests(unittest.TestCase):
     def test_failed_stage_is_visible_and_previous_analysis_survives(self):
         from dart_insight.opendart.client import DartError
         app = start_analysis()
-        app.button(key='run_analysis').click().run()
         previous = dict(app.session_state['analyses'][FIRST.rcept_no])
         def fail(selected, question, progress):
             progress('XML 처리 중')
             raise DartError('공시 XML #1: 안전한 구문 오류 안내', 'document_xml')
         self.service.ask.side_effect = fail
-        app.button(key='run_analysis').click().run()
+        app.chat_input[0].set_value('실패 질문').run()
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any('분석을 완료하지 못했습니다' in e.value for e in app.error))
         self.assertFalse(any('XML' in e.value for e in app.error))

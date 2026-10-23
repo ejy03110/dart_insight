@@ -16,9 +16,8 @@ class AnalysisPresentationTests(unittest.TestCase):
                 progress(message)
             return self.answer(selected, question, progress)
         self.service.ask.side_effect = answer
-        app = fixture.start_analysis()
         with patch('streamlit.status', wraps=st.status) as status, patch('streamlit.spinner', wraps=st.spinner) as spinner, patch('streamlit.write', wraps=st.write) as write:
-            app.button(key='run_analysis').click().run()
+            app = fixture.start_analysis()
             status.assert_called_once()
             self.assertTrue(any(call.args[0] == '분석 중입니다. 잠시만 기다려 주세요.' for call in spinner.call_args_list))
             for message in messages:
@@ -42,22 +41,20 @@ class AnalysisPresentationTests(unittest.TestCase):
 
     def test_failure_keeps_previous_analysis_without_leaking_exception(self):
         app=fixture.start_analysis()
-        app.button(key='run_analysis').click().run()
         previous=dict(app.session_state['analyses'][fixture.FIRST.rcept_no])
         self.service.ask.side_effect=RuntimeError('test-only-sensitive-error-token GMS LangGraph XML')
-        app.button(key='run_analysis').click().run()
+        app.chat_input[0].set_value('실패 질문').run()
         self.assertEqual(app.session_state['analyses'][fixture.FIRST.rcept_no],previous)
         self.assertFalse(any('test-only-sensitive-error-token' in e.value or 'GMS' in e.value for e in app.error))
         self.assertTrue(any('이전 결과와 대화는 유지' in e.value for e in app.error))
 
     def test_progress_reports_only_emitted_stages_and_errors(self):
-        app=fixture.start_analysis()
         def failed(selected,question,progress,**kwargs):
             progress('원문 다운로드 중')
             progress('XML 처리 중')
             raise RuntimeError('secret-not-for-display')
         self.service.ask.side_effect=failed
-        app.button(key='run_analysis').click().run()
+        app=fixture.start_analysis()
         self.assertEqual(app.status[0].state,'error')
         text=' '.join(m.value for m in app.markdown)
         self.assertIn('공시 원문을 수집',text)
@@ -76,7 +73,6 @@ class AnalysisPresentationTests(unittest.TestCase):
 
     def test_citation_number_displays_its_actual_document_title(self):
         app=fixture.start_analysis()
-        app.button(key='run_analysis').click().run()
         citations=app.session_state['analyses'][fixture.FIRST.rcept_no]['citations']
         for citation in citations:
             self.assertTrue(any(f"[근거 {citation['number']}] {citation['title']}" in c.value for c in app.caption))

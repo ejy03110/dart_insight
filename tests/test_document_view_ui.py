@@ -51,7 +51,7 @@ class DocumentViewUiTests(unittest.TestCase):
         self.assertEqual(app.main.button[-1].key,'back_to_recent')
         app.button(key='back_to_recent').click().run()
         self.assertEqual(app.session_state['ui_page'],'공시 탐색')
-        self.assertEqual(app.radio(key='_explore_scope').value,'최근 7일 공시')
+        self.assertFalse(any(r.key=='_explore_scope' for r in app.radio))
         body._request.assert_called_once()
 
     def test_company_period_type_search_page_and_conversation_restored(self):
@@ -63,25 +63,22 @@ class DocumentViewUiTests(unittest.TestCase):
         app.session_state['histories']={fixture.FIRST.rcept_no:old}
         app.session_state['analyses']={fixture.FIRST.rcept_no:{'content':'기존 분석','citations':[]}}
         fixture.explore(app)
-        app.radio(key='_explore_scope').set_value('최근 7일 공시').run()
-        app.button(key='load_recent').click().run()
-        app.text_input(key='_recent_search').set_value('005930').run()
-        app.selectbox(key='_recent_company').select('삼성전자').run()
-        app.selectbox(key='_recent_type').select('정기공시').run()
-        period=(NOW.date()-timedelta(days=2),NOW.date())
-        app.date_input(key='_recent_dates').set_value(period).run()
-        app.selectbox(key='_recent_page').select(2).run()
-        before=[b.key for b in app.button if b.key and b.key.startswith('recent_list_')]
-        app.button(key=before[0]).click().run()
+        # The integrated form preserves company/date/type/title plus server page.
+        app.session_state['api_query']={'company':'삼성전자','begin':'2025-01-01','end':'2025-12-31','kind':'A','keyword':'사업보고서'}
+        app.session_state['api_page']=2
+        app.session_state['stored_page']=1
+        app.session_state['recent_detail']=rows[0]
+        app.session_state['detail_origin']='recent'
+        app.session_state['recent_return']={'scope':'전체 기간 검색','filters':{'api_query':dict(app.session_state['api_query']),'api_page':2,'stored_page':1}}
+        app.session_state['ui_page']='공시 상세'
+        app.run()
         app.button(key='load_document').click().run()
         app.button(key='back_to_recent').click().run()
         self.assertEqual(len(app.exception),0)
-        self.assertEqual(app.text_input(key='_recent_search').value,'005930')
-        self.assertEqual(app.selectbox(key='_recent_company').value,'삼성전자')
-        self.assertEqual(app.selectbox(key='_recent_type').value,'정기공시')
-        self.assertEqual(tuple(app.date_input(key='_recent_dates').value),period)
-        self.assertEqual(app.selectbox(key='_recent_page').value,2)
-        self.assertEqual([b.key for b in app.button if b.key and b.key.startswith('recent_list_')],before)
+        self.assertEqual(app.text_input(key='api_company').value,'삼성전자')
+        self.assertEqual(app.selectbox(key='api_kind').value,'A')
+        self.assertEqual(app.text_input(key='api_keyword').value,'사업보고서')
+        self.assertEqual(app.session_state['api_page'],2)
         self.assertEqual(app.session_state['chosen_receipt'],fixture.FIRST.rcept_no)
         self.assertEqual(app.session_state['histories'][fixture.FIRST.rcept_no],old)
         self.assertEqual(app.session_state['analyses'][fixture.FIRST.rcept_no]['content'],'기존 분석')

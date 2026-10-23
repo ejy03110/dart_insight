@@ -37,7 +37,7 @@ def pagination(page):
         st.button('≫',key='api_last',disabled=page.page>=page.pages,on_click=turn_page,args=(page.pages,),help='맨 마지막')
 
 
-def render_search(settings,indexed,open_detail):
+def render_search(settings,indexed,open_detail, *, supplement=None, availability=None):
     today=datetime.now(ZoneInfo('Asia/Seoul')).date()
     previous=st.session_state.get('api_query',{})
     if previous:
@@ -47,7 +47,7 @@ def render_search(settings,indexed,open_detail):
             st.error('URL의 검색 조건을 확인하고 다시 검색해 주세요.')
             st.session_state.pop('api_query',None)
             previous={}
-    st.caption('기간을 지정해 전체 기업 또는 특정 기업의 공시 목록을 검색합니다. 본문과 AI 색인은 자동으로 생성하지 않습니다.')
+    st.caption('기업·기간·유형·제목을 한 번에 검색합니다. 공식 API 목록과 저장된 공시를 함께 확인하며 같은 접수번호는 한 화면에 한 번 표시합니다.')
     with st.form('api_search'):
         company=st.text_input('기업명·종목코드·기업코드 (선택)',value=previous.get('company',''),key='api_company',max_chars=100)
         columns=st.columns(2)
@@ -64,6 +64,7 @@ def render_search(settings,indexed,open_detail):
             query=SearchQuery(company.strip(),begin,end,kind,keyword.strip())
             st.session_state['api_query']={'company':query.company,'begin':begin.isoformat(),'end':end.isoformat(),'kind':kind,'keyword':query.keyword}
             st.session_state['api_page']=1
+            st.session_state['stored_page']=1
             routes.write_route()
         except SearchValidationError as exc:
             st.error(str(exc));return
@@ -71,13 +72,18 @@ def render_search(settings,indexed,open_detail):
     except (ValueError,KeyError,TypeError):
         st.error('URL의 검색 조건을 확인하고 다시 검색해 주세요.');return
     if query is None:
-        st.info('기업과 기간을 입력하고 공시 검색을 눌러 주세요.');return
+        st.info('기업과 기간을 입력하고 공시 검색을 눌러 주세요.')
+        if supplement: supplement(None, ())
+        return
     with st.spinner('공시를 찾고 있습니다.'):
         result=search_service(settings).search(query,st.session_state.get('api_page',1))
     if result.state=='error':
-        st.error(result.message);return
-    if result.state=='empty':
-        st.info('조회 조건에 해당하는 공시가 없습니다.');return
+        st.error(result.message)
+    elif result.state=='empty':
+        st.info('조회 조건에 해당하는 API 공시가 없습니다.')
+    if supplement and supplement(query, result.items): return
+    if result.state in ('error','empty'): return
+    st.subheader('공식 API 조회 결과')
     st.caption('동일 조건·페이지는 5분간 재사용합니다. 조회 실패 시 1분 후 다시 시도할 수 있습니다.')
     for note in result.notes:st.info(note)
     if query.keyword:st.caption(f'제목 검색 대상: API 목록 {result.api_total:,}건')
@@ -86,9 +92,10 @@ def render_search(settings,indexed,open_detail):
             st.subheader(disclosure.report_nm)
             st.caption(f'{disclosure.corp_name} · {disclosure.rcept_dt} · {disclosure.disclosure_type}')
             known=indexed.get(disclosure.rcept_no)
-            st.caption('AI 분석 가능 · 보관된 공시 · 기존 분석 연결' if known and known.corp_code==disclosure.corp_code else '미색인 공시 · 원문 확인 가능 · AI 분석 미지원')
+            ready, reason = availability(disclosure) if availability else (bool(known and known.corp_code==disclosure.corp_code), 'AI 분석 가능' if known and known.corp_code==disclosure.corp_code else '미색인 공시 · 원문 확인 가능 · AI 분석 미지원')
+            st.caption(reason)
             st.button('공시 상세 보기',key='api_detail_'+disclosure.rcept_no,on_click=open_detail,args=(disclosure,'api'))
-            if known and known.corp_code==disclosure.corp_code:
+            if ready:
                 from dart_insight.ui.routes import write_route
                 def open_analysis(receipt):
                     st.session_state['chosen_receipt']=receipt

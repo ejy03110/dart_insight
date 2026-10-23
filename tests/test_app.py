@@ -16,6 +16,8 @@ APP = str(Path(__file__).resolve().parent.parent / "app.py")
 class AppTests(unittest.TestCase):
     def setUp(self):
         configure_admin(self)
+        from dart_insight.services.recent_disclosures import RecentDisclosureService
+        self.enterContext(patch('dart_insight.ui.recent.recent_service', return_value=RecentDisclosureService(Settings())))
 
     def test_missing_key_and_disclaimer(self):
         with patch("dart_insight.config.load_settings", return_value=Settings()):

@@ -22,6 +22,8 @@ def render_document(settings,disclosure):
         # Only the service-generated whitelist markup is trusted; source markup is never injected.
         content=result.html or '<div class="document-text">'+escape(result.text)+'</div>'
         st.html('<article class="original-document">'+content+'</article>')
+        from dart_insight.ui.charts import render_original_chart
+        render_original_chart(result, disclosure)
     else:
         messages={'unloaded':'본문 불러오기를 누르면 실제 공시 내용을 확인할 수 있습니다.',
                   'empty':'제공된 본문이 비어 있습니다. 공식 DART 원문에서 확인해 주세요.',

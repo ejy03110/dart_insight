@@ -1,5 +1,4 @@
-"""User screens over the existing RAG runtime; navigation never runs providers."""
-from datetime import date
+"""User screens over the existing RAG runtime; automatic analysis reuses receipt-scoped results."""
 import logging
 import streamlit as st
 
@@ -7,12 +6,11 @@ from dart_insight.config import ConfigurationError, DISCLAIMER, load_settings
 from dart_insight.data.models import COMPANIES
 from dart_insight.opendart.client import DartError
 from dart_insight.rag.prompts.answer import ANALYSIS_QUESTION
-from dart_insight.services.discovery import discover, interpret_condition, empty_message
-from dart_insight.services.runtime import Runtime, list_disclosures, open_store
-from dart_insight.rag.llm import GmsClient, LLMError
+from dart_insight.services.runtime import Runtime, list_disclosures, open_store, analysis_readiness
+from dart_insight.rag.llm import LLMError
 from dart_insight.rag.query_extraction import QueryExtractionError
 from dart_insight.ui.chat import history_for, save_turn, group_citations, separate_legacy_analysis, render_copy_option
-from dart_insight.ui.layout import apply_theme, render_hero, render_company_overview, render_disclosure_header
+from dart_insight.ui.layout import apply_theme, render_hero, render_disclosure_header
 from dart_insight.ui.diagnostics import render_diagnostics
 from dart_insight.ui import admin_auth, routes
 from dart_insight.ui.recent import recent_controls
@@ -41,7 +39,12 @@ def navigate(page, receipt=None, company=None):
         st.session_state['explore_search'] = ''
         st.session_state.pop('explore_dates', None)
         st.session_state['explore_type'] = '전체'
-        st.session_state['explore_scope'] = '보관된 공시'
+        st.session_state['explore_scope'] = '전체 기간 검색'
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo('Asia/Seoul')).date()
+        st.session_state['api_query'] = {'company': company, 'begin': (today-timedelta(days=29)).isoformat(), 'end': today.isoformat(), 'kind': '', 'keyword': ''}
+        st.session_state['api_page'] = 1
     if page in ('홈', '공시 탐색', '분석 기록'):
         st.session_state['ui_section'] = page
     elif page in ('공시 분석', '공시 상세'):
@@ -50,14 +53,16 @@ def navigate(page, receipt=None, company=None):
 
 
 RETURN_FILTERS = ('explore_search','explore_company','explore_type','explore_dates','explore_page',
-                  'recent_search','recent_company','recent_type','recent_dates','recent_page','api_query','api_page')
+                  'recent_search','recent_company','recent_type','recent_dates','recent_page','api_query','api_page','stored_page')
 
 
 def open_recent(disclosure,origin='recent'):
     st.session_state['recent_return'] = {
-        'scope': st.session_state.get('explore_scope','최근 7일 공시') if st.session_state.get('ui_page')=='공시 탐색' else '최근 7일 공시',
+        'scope': '전체 기간 검색',
         'filters': {key:st.session_state[key] for key in RETURN_FILTERS if key in st.session_state}}
     st.session_state['recent_detail'] = disclosure
+    if disclosure.rcept_no in by_id and by_id[disclosure.rcept_no].corp_code == disclosure.corp_code:
+        st.session_state['chosen_receipt'] = disclosure.rcept_no
     st.session_state['detail_origin'] = origin
     navigate('공시 상세')
 
@@ -69,23 +74,9 @@ def back_to_recent():
     navigate('공시 탐색')
 
 
-def remember_scope():
-    st.session_state['explore_scope']=st.session_state['_explore_scope']
-    routes.write_route()
-
-
-def remember_page():
-    st.session_state['explore_page']=st.session_state['_explore_page']
-
-
 def menu_changed():
     navigate(st.session_state['ui_section'])
     st.session_state['diagnostic_open'] = False
-
-
-def remember_filter(name):
-    st.session_state[name] = st.session_state['_' + name]
-    st.session_state['explore_page'] = 1
 
 
 histories = st.session_state.setdefault('histories', {})
@@ -122,6 +113,11 @@ except ConfigurationError:
     st.error('서비스 설정을 확인할 수 없습니다. 관리자에게 문의해 주세요.')
     st.stop()
 
+if not settings.dart_api_key and not settings.document_bundle:
+    st.info('공시 조회 연결 설정이 없습니다. 관리자에게 API 인증 설정을 요청해 주세요. 저장된 공시는 계속 탐색할 수 있습니다.')
+if not settings.openai_api_key:
+    st.info('AI 서비스 인증 설정이 없어 분석을 시작할 수 없습니다. 원문과 공시 목록은 별도로 확인할 수 있습니다.')
+
 if st.query_params.get('admin') == 'login' and not admin_auth.is_admin():
     admin_auth.render_login()
     st.stop()
@@ -141,180 +137,18 @@ metadata, embeddings, disclosures = None, None, []
 try:
     metadata, embeddings = cached_store(settings)
     disclosures = list_disclosures(metadata)
+except MetadataIndexError:
+    st.info('AI 메타데이터 색인이 준비되어 있지 않습니다. 관리자에게 색인 준비를 요청해 주세요. 공식 API 공시 검색은 계속 이용할 수 있습니다.')
 except Exception:
     # Technical DB errors and configuration belong to diagnostics, not the home screen.
     st.info('보관된 공시를 불러올 수 없습니다. 잠시 후 다시 이용해 주세요.')
 st.session_state['record_labels'] = [
     {'receipt': d.rcept_no, 'label': f'{d.corp_name} · {d.report_nm}'} for d in disclosures]
 by_id = {d.rcept_no: d for d in disclosures}
+availability_cache = {}
 
 
-if page == '홈':
-    render_hero('홈')
-    search = st.text_input('기업명 또는 종목코드 검색', placeholder='예: 삼성전자, 005930', key='home_search').strip()
-    recent = recent_controls(settings)
-    render_company_overview(disclosures, COMPANIES, search, navigate, recent, open_recent)
-    st.caption(DISCLAIMER)
-    st.stop()
-
-if page == '분석 기록':
-    st.title('분석 기록')
-    st.caption('현재 세션의 기록입니다. 브라우저 새로고침이나 세션 종료 후에는 복원되지 않을 수 있습니다.')
-    recorded = [d for d in disclosures if histories.get(d.rcept_no) or d.rcept_no in analyses]
-    if not recorded:
-        st.info('아직 분석 기록이 없습니다.')
-    for disclosure in recorded:
-        with st.container(border=True):
-            st.subheader(disclosure.report_nm)
-            st.caption(f'{disclosure.corp_name} · {disclosure.rcept_dt}')
-            st.button('이어서 보기', key='record_' + disclosure.rcept_no,
-                      on_click=navigate, args=('공시 분석', disclosure.rcept_no))
-    st.stop()
-
-if page == '공시 탐색':
-    st.title('공시 탐색')
-    st.session_state['_explore_scope']=st.session_state.get('explore_scope','보관된 공시')
-    st.caption('AI 분석을 바로 이용하려면 보관된 공시를 선택하세요. 전체 기간·최근 공시 목록에서도 AI 분석 가능 표시를 확인할 수 있습니다.')
-    scope = st.radio('공시 범위', ['전체 기간 검색','보관된 공시', '최근 7일 공시'], key='_explore_scope',on_change=remember_scope)
-    if scope == '전체 기간 검색':
-        from dart_insight.ui.search import render_search
-        render_search(settings,by_id,open_recent)
-        st.stop()
-    if scope == '최근 7일 공시':
-        from dart_insight.ui.recent import render_recent_list
-        render_recent_list(settings, by_id, open_recent)
-        st.stop()
-    st.caption('AI 분석 가능한 보관 공시입니다. 실시간 공시 조회 결과가 아닙니다.')
-    for name, default in [('explore_search', ''), ('explore_company', '전체'), ('explore_type', '전체')]:
-        st.session_state['_' + name] = st.session_state.get(name, default)
-    search = st.text_input('기업명 또는 종목코드 검색', placeholder='예: 삼성전자, 005930',
-                           key='_explore_search', on_change=remember_filter, args=('explore_search',)).strip()
-    columns = st.columns(3)
-    with columns[0]:
-        company_filter = st.selectbox('기업', ['전체', *[c.name for c in COMPANIES]],
-                                      key='_explore_company', on_change=remember_filter, args=('explore_company',))
-    types = ['전체', *sorted({d.disclosure_type for d in disclosures})]
-    if st.session_state['_explore_type'] not in types:
-        st.session_state['_explore_type'] = '전체'
-    with columns[1]:
-        kind = st.selectbox('공시 유형', types, key='_explore_type', on_change=remember_filter, args=('explore_type',))
-    dates = sorted(date.fromisoformat(d.rcept_dt) for d in disclosures if d.rcept_dt)
-    selected_dates = None
-    with columns[2]:
-        if dates:
-            st.session_state['_explore_dates'] = st.session_state.get('explore_dates', (dates[0], dates[-1]))
-            selected_dates = st.date_input('공시 기간', min_value=dates[0], max_value=dates[-1],
-                                           key='_explore_dates', on_change=remember_filter, args=('explore_dates',))
-    options = [d for d in disclosures if (company_filter == '전체' or d.corp_name == company_filter)
-               and (not search or search.casefold() in d.corp_name.casefold() or search in d.stock_code)
-               and (kind == '전체' or d.disclosure_type == kind)]
-    if selected_dates and len(selected_dates) == 2:
-        options = [d for d in options if selected_dates[0].isoformat() <= d.rcept_dt <= selected_dates[1].isoformat()]
-    elif selected_dates is not None:
-        st.info('조회할 시작일과 종료일을 선택해 주세요.')
-        options = []
-    with st.expander('자연어 조건으로 공시 찾기'):
-        with st.form('discovery'):
-            condition = st.text_area('검색 조건', placeholder='2025년 삼성전자 사업보고서')
-            find = st.form_submit_button('조건에 맞는 공시 검색')
-        if find:
-            if not settings.openai_api_key:
-                st.error('AI 검색을 이용하려면 서비스 인증 설정이 필요합니다. 관리자에게 문의해 주세요.')
-            elif not condition.strip():
-                st.info('검색 조건을 입력해 주세요.')
-            elif options:
-                st.session_state['discovery_condition'] = condition
-                try:
-                    with st.status('조건 후보 검색·선별 중'):
-                        llm = GmsClient(settings)
-                        try:
-                            code = options[0].corp_code if company_filter != '전체' else None
-                            st.session_state['discovery_results'] = discover(metadata, condition, embeddings, settings, llm, code)
-                        finally:
-                            llm.close()
-                except (ConfigurationError, DartError, LLMError, QueryExtractionError, MetadataIndexError) as exc:
-                    st.session_state['discovery_results'] = []
-                    st.error(str(exc))
-                except Exception:
-                    st.session_state['discovery_results'] = []
-                    st.error('조건 검색 실패: 관리자에게 서비스 연결 확인을 요청해 주세요.')
-        if 'discovery_results' in st.session_state:
-            searched_condition = st.session_state.get('discovery_condition', '')
-            st.caption(interpret_condition(searched_condition).description)
-            option_ids = {d.rcept_no for d in options}
-            matches = [r for r in st.session_state['discovery_results'] if r['metadata']['rcept_no'] in option_ids]
-            if not matches:
-                st.info(empty_message(searched_condition))
-            for row in matches:
-                m = row['metadata']
-                st.button(f"{m['corp_name']} · {m['report_nm']} · {m['rcept_dt']}", key='result_' + m['rcept_no'],
-                          on_click=navigate, args=('공시 분석', m['rcept_no']))
-    if not options:
-        st.info('조건에 맞는 보관된 공시가 없습니다.')
-    else:
-        # Keep large existing indexes usable without rendering thousands of widgets.
-        pages = list(range(1, (len(options) - 1) // 20 + 2))
-        if st.session_state.get('explore_page', 1) not in pages:
-            st.session_state['explore_page'] = 1
-        st.session_state['_explore_page']=st.session_state.get('explore_page',1)
-        number = st.selectbox('목록 페이지', pages, key='_explore_page',on_change=remember_page)
-        for disclosure in options[(number - 1) * 20:number * 20]:
-            with st.container(border=True):
-                st.subheader(disclosure.report_nm)
-                st.caption(f'{disclosure.corp_name} · {disclosure.rcept_dt} · {disclosure.disclosure_type}')
-                st.button('공시 분석 열기', key='open_' + disclosure.rcept_no,
-                          on_click=navigate, args=('공시 분석', disclosure.rcept_no))
-    st.stop()
-
-if page == '공시 상세':
-    recent_selected = st.session_state.get('recent_detail')
-    if recent_selected is None and st.session_state.get('route_receipt'):
-        receipt=st.session_state['route_receipt']
-        if st.session_state.get('detail_origin')=='api':
-            from dart_insight.ui.search import query_from_state,search_service
-            try:
-                query=query_from_state()
-                if query:
-                    with st.spinner('공시 정보를 확인하고 있습니다.'):
-                        result=search_service(settings).search(query,st.session_state.get('api_page',1))
-                    recent_selected=next((d for d in result.items if d.rcept_no==receipt),None)
-            except (ValueError,KeyError,TypeError):
-                pass
-        else:
-            from dart_insight.ui.recent import recent_service
-            recent_selected=next((d for r in recent_service(settings).peek().values() for d in r.disclosures if d.rcept_no==receipt),None)
-        if recent_selected is not None:
-            st.session_state['recent_detail']=recent_selected
-    if recent_selected is None:
-        st.info('이 주소의 공시 정보를 현재 조회 범위에서 복원하지 못했습니다. 공시 탐색에서 다시 선택해 주세요.')
-        st.button('공시 탐색으로 이동',on_click=back_to_recent)
-        st.stop()
-    render_disclosure_header(recent_selected,show_source=False,show_identifiers=False)
-    from dart_insight.ui.document_view import render_document
-    render_document(settings,recent_selected)
-    indexed = by_id.get(recent_selected.rcept_no)
-    if indexed is not None and indexed.corp_code == recent_selected.corp_code:
-        st.caption('보관된 공시 · AI 분석 가능')
-        st.button('기존 공시 분석 열기', key='analyze_recent', on_click=navigate,
-                  args=('공시 분석', indexed.rcept_no))
-    else:
-        st.info('아직 분석 준비가 되지 않은 공시입니다. 공식 DART 원문에서 내용을 확인해 주세요.')
-    st.link_button('공식 DART 원문 보기 ↗',recent_selected.source_url)
-    with st.container(key='detail_return'):
-        st.button('← 공시 목록으로 돌아가기', key='back_to_recent', on_click=back_to_recent)
-    st.stop()
-
-receipt = st.session_state.get('chosen_receipt')
-if receipt not in by_id:
-    st.info('이 공시를 현재 목록에서 찾을 수 없습니다. 공시 탐색에서 다시 선택해 주세요.')
-    st.stop()
-selected = by_id[receipt]
-st.button('← 공시 목록', key='back_to_explore', on_click=navigate, args=('공시 탐색',))
-render_disclosure_header(selected)
-st.caption(DISCLAIMER)
-
-
-def render_result(result):
+def render_result(result, *, company=None):
     st.markdown(result['content'])
     render_copy_option(result['content'])
     if result.get('audit', {}).get('query_fallback'):
@@ -337,22 +171,24 @@ def render_result(result):
         st.write(group['source'])
         with st.expander('근거 내용 및 문서 식별 정보'):
             for citation in group['citations']:
-                st.caption(f"[근거 {citation['number']}] 청크 {citation['id']}")
-                st.text(citation.get('text', ''))
+                from dart_insight.ui.evidence import public_excerpt, filing_date
+                st.caption(f"[근거 {citation['number']}] {citation.get('title') or '문서명 미제공'} · {filing_date(citation['source'])} · {company or '기업명 미제공'} · 인용 구간 {citation['number']}")
+                st.text(public_excerpt(citation.get('text', '')))
+            st.caption('표 구조가 남아 있지 않은 근거는 행·열을 추정하지 않습니다. 원문 링크에서 표를 확인하세요. 개인정보 일부는 표시만 생략하며 저장된 근거와 인용 번호는 유지합니다.')
     if result.get('audit') and admin_auth.is_admin():
         with st.expander('분석 과정 상세'):
             st.json(result['audit'])
 
 
-def render_turn(turn):
+def render_turn(turn, *, company=None):
     with st.chat_message(turn['role']):
         if turn['role'] == 'assistant':
-            render_result(turn)
+            render_result(turn, company=company)
         else:
             st.markdown(turn['content'])
 
 
-def run_question(question, *, history=None):
+def run_question(question, *, history=None, target):
     if not settings.openai_api_key:
         st.error('AI 분석을 이용하려면 서비스 인증 설정이 필요합니다. 관리자에게 문의해 주세요.')
         return None
@@ -361,10 +197,13 @@ def run_question(question, *, history=None):
         return None
     last_stage = 'start'
     status = st.status('분석을 준비하고 있습니다.', expanded=True)
+    stage_text = status.empty()
+    seen_labels = []
+    current_label = '분석 준비'
     try:
         with st.spinner('분석 중입니다. 잠시만 기다려 주세요.'):
             def progress(message):
-                nonlocal last_stage
+                nonlocal last_stage, current_label
                 # Only known callback events become public text; never echo raw errors.
                 last_stage = next((phase for word, phase in (('XML', 'parse'), ('검색', 'retrieve'), ('원문', 'collect'), ('색인', 'index'), ('생성', 'generate')) if word in message), 'processing')
                 operations.info('ui_phase=%s', last_stage)
@@ -381,12 +220,18 @@ def run_question(question, *, history=None):
                     '근거 기반 답변 생성 중': '근거를 바탕으로 답변을 작성하고 있습니다.',
                     '이전 대화 확인 완료': '이전 대화에서 답변을 확인했습니다.',
                 }
-                if message in labels:
-                    status.write(labels[message])
-                elif message.startswith('검색어 추출 실패로'):
-                    status.write('검색 조건을 만들지 못해 원래 질문으로 검색을 계속합니다.')
+                label = labels.get(message)
+                if message.startswith('검색어 추출 실패로'):
+                    label = '검색 조건을 만들지 못해 원래 질문으로 검색을 계속합니다.'
+                if label:
+                    current_label = label
+                    if label not in seen_labels:
+                        seen_labels.append(label)
+                    status.update(label=label)
+                    stage_text.markdown('\n\n'.join(('진행 중 · ' if item == label else '완료 · ') + item for item in seen_labels))
             with Runtime(settings, metadata, embeddings) as service:
-                result = service.ask(selected, question, progress, history=history) if history else service.ask(selected, question, progress)
+                result = service.ask(target, question, progress, history=history) if history else service.ask(target, question, progress)
+        stage_text.markdown('\n\n'.join('완료 · ' + item for item in seen_labels))
         status.update(label='분석이 완료되었습니다.', state='complete', expanded=False)
         return result
     except (ConfigurationError, DartError, LLMError, QueryExtractionError, MetadataIndexError) as exc:
@@ -397,32 +242,158 @@ def run_question(question, *, history=None):
         # No raw exception, prompt, URL, or credential is copied into public output/logs.
         operations.error('ui_request_failed phase=%s exception=%s', last_stage, type(exc).__name__)
         st.error('처리 실패: 요청을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요. 이전 결과와 대화는 유지됩니다.')
-    status.update(label='분석을 완료하지 못했습니다.', state='error', expanded=True)
+    stage_text.markdown('\n\n'.join(('실패 · ' if item == current_label else '완료 · ') + item for item in seen_labels))
+    status.update(label='실패 단계: ' + current_label, state='error', expanded=True)
     return None
 
 
-with st.container(border=True, key='disclosure_analysis'):
-    st.subheader('공시 핵심 분석')
-    analysis = st.button('공시 핵심 분석 실행', key='run_analysis')
-    if analysis:
-        result = run_question(ANALYSIS_QUESTION)
-        if result is not None:
-            analyses[receipt] = {'content': result['answer'], 'citations': result['citations'],
-                                 'audit': result.get('audit', {})}
-            st.rerun()
-    if receipt in analyses:
-        render_result(analyses[receipt])
-        st.caption('이 공시에 저장된 분석 결과입니다. 추가 질문으로 분석을 다시 실행하지 않습니다.')
-    else:
-        st.info('분석 실행 버튼을 누르면 핵심 내용 요약·문서에 명시된 위험 요인·추가 확인 필요 사항을 표시합니다.')
+def availability(disclosure):
+    known = by_id.get(disclosure.rcept_no)
+    if known is None or known.corp_code != disclosure.corp_code:
+        return False, '미색인 공시 · 원문 확인 가능 · AI 분석 미지원'
+    key = (known.rcept_no, known.corp_code)
+    if key not in availability_cache:
+        availability_cache[key] = analysis_readiness(settings, known)
+    return availability_cache[key]
 
-with st.container(key='disclosure_chat'):
-    st.subheader('공시 관련 추가 질문')
-    for turn in history_for(histories, receipt):
-        render_turn(turn)
-    question = st.chat_input('선택 공시에 대해 추가 질문하세요', key='followup_question')
-    if question:
-        result = run_question(question, history=[dict(turn) for turn in history_for(histories, receipt)])
-        if result is not None:
-            save_turn(histories, receipt, question, result)
-            st.rerun()  # Refresh the saved conversation without rerunning analysis.
+
+def render_automatic(disclosure):
+    from dart_insight.ui.analysis import ensure_analysis
+    receipt = disclosure.rcept_no
+    attempts = st.session_state.setdefault('analysis_attempts', {})
+    ready, reason = availability(disclosure)
+    if receipt not in analyses and not ready:
+        st.info(reason)
+        return
+    retry = False
+    had_attempt = attempts.get(receipt) in ('failed', 'running')
+    if receipt not in analyses and attempts.get(receipt) in ('failed', 'running'):
+        st.warning('이 공시의 분석이 완료되지 않았습니다. 자동 재호출하지 않습니다.')
+        retry = st.button('분석 다시 시도', key='retry_analysis_' + receipt)
+    result = ensure_analysis(receipt, analyses, attempts,
+                             lambda: run_question(ANALYSIS_QUESTION, target=disclosure), retry=retry)
+    if result is not None:
+        render_result(result, company=disclosure.corp_name)
+        st.caption('현재 세션에 저장된 분석입니다. 화면 전환·추가 질문으로 같은 분석을 반복하지 않습니다.')
+    elif attempts.get(receipt) == 'failed' and not had_attempt:
+        st.button('분석 다시 시도', key='retry_analysis_' + receipt, on_click=lambda: attempts.pop(receipt, None))
+
+
+def render_analysis_view(disclosure):
+    with st.container(border=True, key='disclosure_analysis'):
+        st.subheader('공시 핵심 분석')
+        render_automatic(disclosure)
+    with st.container(key='disclosure_chat'):
+        st.subheader('공시 관련 추가 질문')
+        receipt = disclosure.rcept_no
+        for turn in history_for(histories, receipt):
+            render_turn(turn, company=disclosure.corp_name)
+        # Explicit questions retain F2003-F2005 first-time collection even when
+        # automatic analysis is blocked for a metadata-only item.
+        if not settings.openai_api_key or not (settings.dart_api_key or settings.document_bundle):
+            st.info('질문을 보내려면 AI 및 공시 원문 연결 설정이 필요합니다.')
+            return
+        question = st.chat_input('선택 공시에 대해 추가 질문하세요', key='followup_question')
+        if question:
+            result = run_question(question, target=disclosure, history=[dict(turn) for turn in history_for(histories, receipt)])
+            if result is not None:
+                save_turn(histories, receipt, question, result)
+                st.rerun()
+
+
+if page == '홈':
+    render_hero('홈')
+    search = st.text_input('기업명 또는 종목코드 검색', placeholder='예: 삼성전자, 005930', key='home_search').strip()
+    recent = recent_controls(settings, auto=True)
+    from dart_insight.ui.dashboard import render_carousel
+    render_carousel(COMPANIES, search, recent, open_recent, navigate, availability)
+    st.subheader('오늘의 AI 브리핑')
+    st.caption('최근 7일 공시 중 본문 색인이 확인된 대표 1건만 세션당 자동 분석합니다. 기업 카드 이동으로 분석 대상을 바꾸거나 추가 호출하지 않습니다.')
+    if 'briefing_receipt' not in st.session_state:
+        candidates = sorted((d for result in recent.values() for d in result.disclosures), key=lambda d:(d.rcept_dt,d.rcept_no), reverse=True)
+        representative = next((d for d in candidates if availability(d)[0]), None)
+        if representative:
+            st.session_state['briefing_receipt'] = representative.rcept_no
+    representative = by_id.get(st.session_state.get('briefing_receipt'))
+    if representative:
+        st.caption(f'{representative.corp_name} · {representative.report_nm} · {representative.rcept_dt}')
+        render_automatic(representative)
+    else:
+        st.info('최근 7일 공시 중 AI 분석 가능한 본문 색인이 없습니다. 공시 탐색에서 기존 공시와 원문을 확인하세요.')
+    st.caption(DISCLAIMER)
+    st.stop()
+
+if page == '분석 기록':
+    st.title('분석 기록')
+    st.caption('현재 세션의 기록입니다. 브라우저 새로고침이나 세션 종료 후에는 복원되지 않을 수 있습니다.')
+    recorded = [d for d in disclosures if histories.get(d.rcept_no) or d.rcept_no in analyses]
+    if not recorded:
+        st.info('아직 분석 기록이 없습니다.')
+    for disclosure in recorded:
+        with st.container(border=True):
+            st.subheader(disclosure.report_nm)
+            st.caption(f'{disclosure.corp_name} · {disclosure.rcept_dt}')
+            st.button('이어서 보기', key='record_' + disclosure.rcept_no,
+                      on_click=navigate, args=('공시 분석', disclosure.rcept_no))
+    st.stop()
+
+if page == '공시 탐색':
+    st.title('공시 탐색')
+    # Legacy scope URLs are accepted, but never require a source choice.
+    st.session_state['explore_scope'] = '전체 기간 검색'
+    from dart_insight.ui.explore import render_unified
+    render_unified(settings, by_id, metadata, embeddings, open_recent, availability)
+    st.stop()
+
+if page == '공시 상세':
+    recent_selected = st.session_state.get('recent_detail')
+    if recent_selected is None and st.session_state.get('route_receipt'):
+        receipt=st.session_state['route_receipt']
+        if receipt in by_id:
+            recent_selected = by_id[receipt]
+        elif st.session_state.get('detail_origin')=='api':
+            from dart_insight.ui.search import query_from_state,search_service
+            try:
+                query=query_from_state()
+                if query:
+                    with st.spinner('공시 정보를 확인하고 있습니다.'):
+                        result=search_service(settings).search(query,st.session_state.get('api_page',1))
+                    recent_selected=next((d for d in result.items if d.rcept_no==receipt),None)
+            except (ValueError,KeyError,TypeError):
+                pass
+        else:
+            from dart_insight.ui.recent import recent_service
+            with st.spinner('최근 공시 정보를 확인하고 있습니다.'):
+                recent_results = recent_service(settings).refresh()
+            recent_selected=next((d for r in recent_results.values() for d in r.disclosures if d.rcept_no==receipt),None)
+        if recent_selected is not None:
+            st.session_state['recent_detail']=recent_selected
+    if recent_selected is None:
+        st.info('이 주소의 공시 정보를 현재 조회 범위에서 복원하지 못했습니다. 공시 탐색에서 다시 선택해 주세요.')
+        st.button('공시 탐색으로 이동',on_click=back_to_recent)
+        st.stop()
+    render_disclosure_header(recent_selected,show_source=False,show_identifiers=False)
+    st.caption(DISCLAIMER)
+    from dart_insight.ui.document_view import render_document
+    render_document(settings,recent_selected)
+    indexed = by_id.get(recent_selected.rcept_no)
+    if indexed is not None and indexed.corp_code == recent_selected.corp_code:
+        render_analysis_view(indexed)
+    else:
+        st.info('아직 분석 준비가 되지 않은 공시입니다. 공식 DART 원문에서 내용을 확인해 주세요.')
+    st.link_button('공식 DART 원문 보기 ↗',recent_selected.source_url)
+    with st.container(key='detail_return'):
+        st.button('← 공시 목록으로 돌아가기', key='back_to_recent', on_click=back_to_recent)
+    st.stop()
+
+receipt = st.session_state.get('chosen_receipt')
+if receipt not in by_id:
+    st.info('이 공시를 현재 목록에서 찾을 수 없습니다. 공시 탐색에서 다시 선택해 주세요.')
+    st.stop()
+selected = by_id[receipt]
+st.button('← 공시 목록', key='back_to_explore', on_click=navigate, args=('공시 탐색',))
+render_disclosure_header(selected)
+st.caption(DISCLAIMER)
+
+
+render_analysis_view(selected)

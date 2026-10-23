@@ -24,7 +24,7 @@ class SearchUiTests(unittest.TestCase):
     def start(self):
         app=AppTest.from_file(fixture.APP).run()
         app.radio(key='ui_section').set_value('공시 탐색').run()
-        self.assertEqual(app.radio(key='_explore_scope').value,'전체 기간 검색')
+        self.assertFalse(any(r.key=='_explore_scope' for r in app.radio))
         return app
 
     def submit(self,app,company='00126380',keyword=''):
@@ -120,10 +120,10 @@ class SearchUiTests(unittest.TestCase):
         self.submit(app,company='00126380')
         client._json.side_effect=None;client._json.return_value={'status':'013'}
         self.submit(app,company='005930')
-        self.assertTrue(any('조회 조건에 해당하는 공시가 없습니다' in i.value for i in app.info))
+        self.assertTrue(any('조회 조건에 해당하는 API 공시가 없습니다' in i.value for i in app.info))
         self.assertFalse(any(b.key=='api_next' for b in app.button))
 
-    def test_indexed_result_has_direct_analysis_action_but_never_auto_runs_rag(self):
+    def test_indexed_result_has_direct_analysis_action_and_reuses_automatic_analysis(self):
         client=self.build_service()
         from dart_insight.data.models import Disclosure
         row=api_payload({'page_no':1,'page_count':20})['list'][0]
@@ -133,5 +133,7 @@ class SearchUiTests(unittest.TestCase):
             app.button(key='api_analyze_'+known.rcept_no).click().run()
             self.assertEqual(app.session_state['chosen_receipt'],known.rcept_no)
             self.assertEqual(app.session_state['ui_page'],'공시 분석')
-            self.assertTrue(any(b.key=='run_analysis' for b in app.button))
-            self.runtime.assert_not_called()
+            self.assertFalse(any(b.key=='run_analysis' for b in app.button))
+            self.service.ask.assert_called_once()
+            app.run()
+            self.service.ask.assert_called_once()

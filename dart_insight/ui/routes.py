@@ -5,7 +5,7 @@ import streamlit as st
 
 VIEWS={'홈':'home','공시 탐색':'explore','공시 상세':'detail','공시 분석':'analysis','분석 기록':'history'}
 SCOPES={'보관된 공시':'stored','최근 7일 공시':'recent','전체 기간 검색':'all'}
-FIELDS={'v','scope','c','begin','end','ty','q','p','r','origin'}
+FIELDS={'v','scope','c','begin','end','ty','q','p','r','origin','sp'}
 
 
 def _signature(params):
@@ -65,6 +65,9 @@ def sync_route(selected=None):
     try: number=max(1,min(1000000,int(params.get('p',1))))
     except (ValueError,TypeError):number=1
     st.session_state['api_page']=number
+    try: stored_page=max(1,min(1000000,int(params.get('sp',1))))
+    except (ValueError,TypeError):stored_page=1
+    st.session_state['stored_page']=stored_page
     receipt=params.get('r','')
     if re.fullmatch(r'[0-9]{14}',receipt):
         st.session_state['route_receipt']=receipt
@@ -78,7 +81,7 @@ def sync_route(selected=None):
         if page=='공시 분석':st.session_state.pop('chosen_receipt',None)
     st.session_state['detail_origin']='api' if params.get('origin')=='api' else 'recent'
     if page=='공시 상세':
-        st.session_state['recent_return']={'scope':scope,'filters':{key:st.session_state[key] for key in ('api_query','api_page') if key in st.session_state}}
+        st.session_state['recent_return']={'scope':scope,'filters':{key:st.session_state[key] for key in ('api_query','api_page','stored_page') if key in st.session_state}}
 
 
 def write_route():
@@ -87,6 +90,7 @@ def write_route():
     if page in ('공시 탐색','공시 상세'):
         scope=st.session_state.get('recent_return',{}).get('scope') if page=='공시 상세' else st.session_state.get('explore_scope')
         params['scope']=SCOPES.get(scope,'all')
+        params['sp']=str(st.session_state.get('stored_page',1))
     if page in ('공시 탐색','공시 상세') and (params.get('scope')=='all' or st.session_state.get('detail_origin')=='api' and page=='공시 상세'):
         query=st.session_state.get('api_query',{})
         for key,name in [('c','company'),('begin','begin'),('end','end'),('ty','kind'),('q','keyword')]:
