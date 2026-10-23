@@ -1,5 +1,14 @@
 # DART Insight 진행 현황
 
+## F2014 최소 MMR 비교 구현 (2026-10-23)
+
+- `rag/mmr.py`, `scripts/compare_mmr.py`만으로 기존 BGE/Chroma 후보의 cosine/MMR Top 5 비교 제공. 기존 RAG 서비스/UI 미연결·미수정.
+- 운영 색인과 모델 캐시를 임시 복사하고 자식 프로세스에서만 열어 Windows 파일 잠금/원본 변경을 방지. 오프라인 모델 재사용, GMS/수집/재색인 없음.
+- 신규 단위5개 통과, 전체314 실행/313 통과/실패0/오류0/Windows skip1(71.326초).
+- 클라우드 CLI 실제 실행: exit2 `blocked/existing_index_missing`. 실제 색인/캐시는 사용자 Windows에만 있어 비교 결과·F2014 전체 충족 판정은 보류.
+- Windows 명령어·출력 방법·제약·실제 실행 기록: [F2014 비교 문서](f2014-mmr-comparison.md).
+
+
 ## 홈 자동 AI 브리핑 실패 진단 보완 (2026-10-23)
 
 - 최종 Linux 전체 회귀: **309 실행 / 308 통과 / 실패0 / 오류0 / Windows 전용 skip1**, 72.981초. 마지막 정제 예외 유형 보완 후 관련12개도 재확인(12 통과, 9.677초). 실제 API·Windows OS 검증과 구분.
