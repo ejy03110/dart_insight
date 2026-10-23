@@ -131,7 +131,7 @@ class RagUiTests(unittest.TestCase):
         self.assertEqual(self.service.ask.call_count, count + 1)
 
     def test_duplicate_source_link_is_shown_once_with_both_chunk_numbers(self):
-        def answer(selected, question, progress):
+        def answer(selected, question, progress, **kwargs):
             result = self.answer(selected, question, progress)
             first = {**result['citations'][0], 'number': 2, 'id': 'doc:chunk2', 'source_type': 'opendart_document'}
             second = {**first, 'number': 3, 'id': 'doc:chunk3'}
@@ -177,7 +177,7 @@ class RagUiTests(unittest.TestCase):
             self.assertFalse(any('본문 수치' in i.value for i in app.info))
 
     def test_recovery_notes_and_supported_copy_ui_are_visible_after_analysis_and_rerun(self):
-        def answer(selected, question, progress):
+        def answer(selected, question, progress, **kwargs):
             result = self.answer(selected, question, progress)
             result['audit']['parse_notes'] = ['XML #1: < TV 시장점유율 추이 > 문자 보존 복구. 삭제한 본문 없음.']
             return result
@@ -192,7 +192,7 @@ class RagUiTests(unittest.TestCase):
         self.assertTrue(any('제목 표기' in w.value for w in app.warning))
 
     def test_query_fallback_warning_is_preserved_with_analysis_without_reexecution(self):
-        def answer(selected, question, progress):
+        def answer(selected, question, progress, **kwargs):
             result = self.answer(selected, question, progress)
             result['audit']['query_fallback'] = {'category': 'timeout', 'http_status': None}
             return result
@@ -208,7 +208,7 @@ class RagUiTests(unittest.TestCase):
         from dart_insight.opendart.client import DartError
         app = start_analysis()
         previous = dict(app.session_state['analyses'][FIRST.rcept_no])
-        def fail(selected, question, progress):
+        def fail(selected, question, progress, **kwargs):
             progress('XML 처리 중')
             raise DartError('공시 XML #1: 안전한 구문 오류 안내', 'document_xml')
         self.service.ask.side_effect = fail
@@ -225,8 +225,8 @@ class RagUiTests(unittest.TestCase):
         self.assertEqual([m.name for m in app.chat_message], ['user', 'assistant'])
         app.chat_input[0].set_value('그럼 쉽게 설명해줘').run()
         forwarded = self.service.ask.call_args.kwargs['history']
-        self.assertEqual([t['role'] for t in forwarded], ['user', 'assistant'])
-        self.assertEqual(forwarded[0]['content'], '첫 질문')
+        self.assertEqual([t['role'] for t in forwarded], ['user', 'assistant', 'user', 'assistant'])
+        self.assertEqual(forwarded[2]['content'], '첫 질문')
         self.assertEqual(len(app.chat_message), 4)
         self.assertEqual(len(app.chat_input), 1)
         calls = self.service.ask.call_count
@@ -239,7 +239,9 @@ class RagUiTests(unittest.TestCase):
         self.assertFalse(any(getattr(b.proto, "height", 0) == 450 for b in app.get("flex_container")))
         open_disclosure(app, SECOND.rcept_no)
         app.chat_input[0].set_value('다른 공시 첫 질문').run()
-        self.assertNotIn('history', self.service.ask.call_args.kwargs)
+        forwarded = self.service.ask.call_args.kwargs['history']
+        self.assertEqual(len(forwarded), 2)
+        self.assertTrue(all(turn['rcept_no'] == SECOND.rcept_no for turn in forwarded))
         self.assertEqual(len(app.chat_message), 2)
         open_disclosure(app, FIRST.rcept_no)
         self.assertEqual(len(app.chat_message), 4)

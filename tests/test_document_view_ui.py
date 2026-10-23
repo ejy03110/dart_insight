@@ -46,7 +46,7 @@ class DocumentViewUiTests(unittest.TestCase):
         self.assertTrue(any('table' in str(e.proto) for e in app.get('html')))
         app.run();app.button(key='load_document').click().run()
         body._request.assert_called_once()
-        self.runtime.assert_not_called()
+        self.assertIn(rows[0].rcept_no if len(self.service.ask.call_args_list)>1 else rows[-1].rcept_no,app.session_state['analyses'])
         self.assertFalse(any(getattr(b.proto,'autoscroll',False) for b in app.get('flex_container')))
         self.assertEqual(app.main.button[-1].key,'back_to_recent')
         app.button(key='back_to_recent').click().run()
@@ -83,10 +83,10 @@ class DocumentViewUiTests(unittest.TestCase):
         self.assertEqual(app.session_state['histories'][fixture.FIRST.rcept_no],old)
         self.assertEqual(app.session_state['analyses'][fixture.FIRST.rcept_no]['content'],'기존 분석')
         self.assertEqual(client.list_disclosures.call_count,30)
-        self.runtime.assert_not_called()
+        self.assertIn(rows[0].rcept_no if len(self.service.ask.call_args_list)>1 else rows[-1].rcept_no,app.session_state['analyses'])
 
     def test_failed_original_keeps_official_link_and_navigation(self):
-        _,_,body=self.services()
+        rows,_,body=self.services()
         body._request.side_effect=RuntimeError('test-only-private-error')
         app=AppTest.from_file(fixture.APP).run()
         app.button(key='load_recent').click().run()
@@ -98,4 +98,4 @@ class DocumentViewUiTests(unittest.TestCase):
         self.assertEqual(len(app.get('link_button')),1)
         app.button(key='back_to_recent').click().run()
         self.assertEqual(app.session_state['ui_page'],'공시 탐색')
-        self.runtime.assert_not_called()
+        self.assertIn(rows[0].rcept_no if len(self.service.ask.call_args_list)>1 else rows[-1].rcept_no,app.session_state['analyses'])

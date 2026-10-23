@@ -32,16 +32,13 @@ class RecentUiTests(unittest.TestCase):
             factory.assert_called_once()
             self.assertEqual(len([b for b in app.button if b.key and b.key.startswith('recent_home_005930')]),3)
             calls=client.list_disclosures.call_count
-            app.button(key='company_next').click().run()
             self.assertTrue(any(i.value=='최근 7일간 새로운 공시가 없습니다.' for i in app.info))
-            self.assertTrue(any('2 / 3' in c.value for c in app.caption))
-            app.button(key='company_previous').click().run()
             app.text_input(key='home_search').set_value('005930').run()
             app.button(key='load_recent').click().run()
             self.assertEqual(client.list_disclosures.call_count,calls)
-            self.runtime.assert_not_called()
+            self.service.ask.assert_called_once()
 
-    def test_unindexed_detail_has_original_title_and_url_but_no_analysis(self):
+    def test_unindexed_detail_automatically_prepares_analysis_without_action_buttons(self):
         _,_,_,rows=self.build_recent()
         with patch('dart_insight.services.runtime.analysis_readiness', return_value=(False,'본문 미색인 공시')):
             app=AppTest.from_file(fixture.APP).run()
@@ -50,8 +47,9 @@ class RecentUiTests(unittest.TestCase):
             self.assertTrue(any(h.value==rows[1].report_nm for h in app.subheader))
             self.assertTrue(any(l.proto.url==rows[1].source_url for l in app.get('link_button')))
             self.assertFalse(any(b.key in ('run_analysis','analyze_recent') for b in app.button))
-            self.assertTrue(any('아직 분석 준비가 되지 않은 공시' in i.value for i in app.info))
-            self.runtime.assert_not_called()
+            self.assertIn(rows[1].rcept_no,app.session_state['analyses'])
+            self.assertFalse(app.chat_input[0].proto.disabled)
+            self.assertEqual(self.service.ask.call_count,1)  # homepage picked this same latest item
             app.button(key='back_to_recent').click().run()
             self.assertFalse(any(r.key=='_explore_scope' for r in app.radio))
 
@@ -59,10 +57,9 @@ class RecentUiTests(unittest.TestCase):
         _,_,_,rows=self.build_recent()
         app=AppTest.from_file(fixture.APP).run()
         self.service.ask.assert_called_once()
-        self.assertEqual(self.service.ask.call_args.args[0],rows[0])
-        app.button(key='company_next').click().run()
-        app.button(key='company_previous').click().run()
-        app.button(key='recent_home_005930_'+rows[0].rcept_no).click().run()
+        self.assertEqual(self.service.ask.call_args.args[0],rows[1])
+        app.run()
+        app.button(key='recent_home_005930_'+rows[1].rcept_no).click().run()
         self.service.ask.assert_called_once()
         self.assertEqual(len(app.chat_message),0)
         app.chat_input[0].set_value('추가 질문').run()

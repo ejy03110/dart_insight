@@ -14,6 +14,9 @@ from dart_insight.rag.transport import GmsRequestError, post_chat
 
 class LLMError(ValueError):
     """Curated public error; provider text is never included."""
+    def __init__(self, message, *, category="processing", status=None):
+        self.category, self.status = category, status
+        super().__init__(message)
 
 
 class GmsClient:
@@ -23,6 +26,7 @@ class GmsClient:
         self.owned = session is None
         self.last_call = 0.0
         self._terminal_extraction_error = None
+        self._terminal_extraction_category = None
 
     def close(self):
         if self.owned:
@@ -36,12 +40,14 @@ class GmsClient:
 
     def extract(self, selected, question, *, history=None):
         self._terminal_extraction_error = None
+        self._terminal_extraction_category = None
         self._wait()
         try:
             return extract_queries(selected, question, self.settings, session=self.session, history=history)["queries"]
         except QueryExtractionError as exc:
             if exc.category in ('authentication', 'not_found', 'request'):
                 self._terminal_extraction_error = str(exc)
+                self._terminal_extraction_category = exc.category
             raise
         finally:
             self.last_call = time.monotonic()
@@ -49,7 +55,7 @@ class GmsClient:
     def json(self, system, payload, validate):
         operation = '최종 답변 생성' if 'evidence' in payload else '후보 선별'
         if self._terminal_extraction_error:
-            raise LLMError('GMS ' + operation + ' 중단: 같은 요청의 검색어 추출에서 복구 불가능한 설정 오류가 확인되었습니다. ' + self._terminal_extraction_error)
+            raise LLMError('GMS ' + operation + ' 중단: 같은 요청의 검색어 추출에서 복구 불가능한 설정 오류가 확인되었습니다. ' + self._terminal_extraction_error, category=self._terminal_extraction_category)
         if not self.settings.openai_api_key:
             raise ConfigurationError("GMS API 키를 OPENAI_API_KEY에 설정해 주세요.")
         messages = [{"role": "system", "content": system},
@@ -62,7 +68,7 @@ class GmsClient:
                 if exc.retryable and attempt < 2:
                     time.sleep(min(2 ** attempt, 4))
                     continue
-                raise LLMError('GMS ' + operation + ' 실패: ' + str(exc)) from None
+                raise LLMError('GMS ' + operation + ' 실패: ' + str(exc), category=exc.category, status=exc.status) from None
             try:
                 try:
                     with measure('gms_validation', attempt=attempt + 1):
@@ -93,7 +99,7 @@ class GmsClient:
                             'grounding': '인용 근거에서 배정 대상·의무보유 주체·자금 목적 등 핵심 주장을 확인하지 못했습니다. 근거가 부족한 내용은 단정할 수 없습니다.',
                             'validator_internal': '검증기 내부 오류가 발생했습니다. 서버 로그의 exception/rule을 확인하세요.',
                         }.get(exc.category, '정상 JSON 답변을 받지 못했습니다. 모델 설정을 확인하세요.')
-                        raise LLMError('GMS ' + operation + ' 응답 오류 [' + exc.category + ']: ' + guidance) from None
+                        raise LLMError('GMS ' + operation + ' 응답 오류 [' + exc.category + ']: ' + guidance, category=exc.category) from None
                     messages = [*messages[:2], {'role': 'user', 'content':
                         '이전 응답의 형식 또는 근거 검증에 실패했습니다. 시스템의 JSON 스키마와 근거 규칙을 정확히 지켜 전체 JSON 객체만 반환하세요. 확인되지 않는 주장은 단정하지 말고 근거 부족을 안내하며, 답을 확인할 수 없으면 supported=false로 반환하세요.'}]
                     continue

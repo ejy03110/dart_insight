@@ -60,7 +60,7 @@ class SearchUiTests(unittest.TestCase):
         app.button(key='api_first').click().run()
         self.assertEqual(app.session_state['api_page'],1)
         self.assertEqual(client._json.call_count,3)
-        self.runtime.assert_not_called()
+        self.service.ask.assert_called_once()
 
     def test_period_search_does_not_require_an_existing_chroma_index(self):
         client=self.build_service()
@@ -70,7 +70,7 @@ class SearchUiTests(unittest.TestCase):
             self.assertEqual(len([b for b in app.button if b.key and b.key.startswith('api_detail_')]),20)
             app.button(key='api_detail_20200101000001').click().run()
             self.assertFalse(any(b.key=='analyze_recent' for b in app.button))
-            self.runtime.assert_not_called()
+            self.service.ask.assert_called_once()
 
     def test_all_companies_keyword_total_and_new_conditions_reset_page(self):
         client=self.build_service();app=self.start()
@@ -93,12 +93,12 @@ class SearchUiTests(unittest.TestCase):
         self.assertEqual(len(app.exception),0)
         self.assertEqual(app.session_state['recent_detail'].rcept_no,'20200101000021')
         self.assertTrue(any(h.value=='사업보고서 21' for h in app.subheader))
-        self.assertEqual(len(app.get('html')),0)  # no automatic original download
+        self.assertFalse(any('original-document' in str(e.proto) for e in app.get('html')))  # no redundant viewer fetch
         app.button(key='back_to_recent').click().run()
         self.assertEqual(app.session_state['api_page'],2)
         self.assertEqual(app.selectbox(key='api_kind').value,'A')
         client._json.assert_called_once()
-        self.runtime.assert_not_called()
+        self.service.ask.assert_called_once()
 
     def test_url_navigation_rehydrates_form_no_secret_or_role_escalation(self):
         client=self.build_service();app=self.start();self.submit(app)

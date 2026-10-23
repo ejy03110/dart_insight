@@ -97,11 +97,13 @@ def render_search(settings,indexed,open_detail, *, supplement=None, availability
             st.button('공시 상세 보기',key='api_detail_'+disclosure.rcept_no,on_click=open_detail,args=(disclosure,'api'))
             if ready:
                 from dart_insight.ui.routes import write_route
-                def open_analysis(receipt):
+                def open_analysis(disclosure):
+                    receipt=disclosure.rcept_no
+                    st.session_state.setdefault('session_disclosures',{})[receipt]=disclosure
                     st.session_state['chosen_receipt']=receipt
                     st.session_state['ui_page']='공시 분석'
                     st.session_state['ui_section']=None
                     write_route()
                 st.button('AI 분석 열기',key='api_analyze_'+disclosure.rcept_no,
-                          on_click=open_analysis,args=(disclosure.rcept_no,))
+                          on_click=open_analysis,args=(disclosure,))
     pagination(result)

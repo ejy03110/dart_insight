@@ -156,13 +156,13 @@ class AutomaticUiTests(unittest.TestCase):
         app.run()
         self.assertEqual(self.service.ask.call_count,2)
 
-    def test_metadata_only_blocks_auto_but_explicit_question_preserves_required_collection(self):
+    def test_metadata_only_starts_automatic_collection_before_followup(self):
         with patch('dart_insight.services.runtime.analysis_readiness',return_value=(False,'본문 미색인 공시')):
             app=fixture.start_analysis()
-            self.service.ask.assert_not_called()
-            self.assertTrue(any('본문 미색인' in i.value for i in app.info))
-            app.chat_input[0].set_value('이 공시 원문을 근거로 알려주세요').run()
             self.service.ask.assert_called_once()
+            self.assertIn(fixture.FIRST.rcept_no,app.session_state['analyses'])
+            app.chat_input[0].set_value('이 공시 원문을 근거로 알려주세요').run()
+            self.assertEqual(self.service.ask.call_count,2)
             self.assertEqual(len(app.chat_message),2)
 
     def test_many_repeated_progress_events_remain_bounded_and_expose_current_failure(self):
@@ -250,6 +250,10 @@ class UnifiedExplorationTests(unittest.TestCase):
             self.assertTrue(any(b.key=='api_detail_'+fixture.FIRST.rcept_no for b in app.button))
             self.assertTrue(any('미색인 공시' in c.value for c in app.caption))
             self.assertEqual(len(app.exception),0)
+            app.button(key='api_analyze_'+fixture.FIRST.rcept_no).click().run()
+            self.assertEqual(len(app.exception),0)
+            self.assertIn(fixture.FIRST.rcept_no,app.session_state['analyses'])
+            self.service.ask.assert_called_once()
 
     def test_cold_url_preserves_stored_result_page(self):
         rows=[replace(fixture.FIRST,rcept_no=f'20250101{i:06d}') for i in range(1,26)]

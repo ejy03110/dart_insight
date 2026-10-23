@@ -37,15 +37,23 @@ class Runtime:
     def __init__(self, settings, metadata, embeddings):
         from dart_insight.services.rag_service import RagService
         from dart_insight.vectorstore.documents import open_document_collection
+        self.settings = settings
+        self.metadata = metadata if metadata is not None else open_metadata_collection(settings.chroma_dir, settings.embedding_model)
+        self.embeddings = embeddings if embeddings is not None else create_embeddings(settings)
         self.llm = GmsClient(settings)
         self.source = BundleSource(settings.document_bundle) if settings.document_bundle else OpenDartSource(settings)
-        self.service = RagService(settings, metadata,
+        self.service = RagService(settings, self.metadata,
                                   open_document_collection(settings.chroma_dir, settings.embedding_model),
-                                  embeddings, CollectionLedger(settings.data_dir / 'collection.sqlite3'),
+                                  self.embeddings, CollectionLedger(settings.data_dir / 'collection.sqlite3'),
                                   self.source, self.llm)
 
     def __enter__(self):
-        return self.service
+        return self
+
+    def ask(self, selected, question, progress=lambda _: None, *, history=None):
+        from dart_insight.services.analysis_preparation import ensure_metadata
+        ensure_metadata(selected, self.metadata, self.embeddings, self.settings, progress)
+        return self.service.ask(selected, question, progress, history=history)
 
     def __exit__(self, *_):
         self.source.close()

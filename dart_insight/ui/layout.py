@@ -18,7 +18,7 @@ def apply_theme():
     [data-testid="stSidebar"] button:hover {background:#32628e;color:#fff;}
     [data-testid="stSidebar"] [role="radiogroup"] label {padding:.45rem .6rem;border-radius:8px;}
     [data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) {background:#254b70;}
-    .block-container {max-width:1320px;padding-top:2rem;padding-bottom:3rem;}
+    .block-container {max-width:1320px;padding-top:5rem;padding-bottom:3rem;}
     h1,h2,h3 {color:#102c50;letter-spacing:-.035em;}
     [data-testid="stVerticalBlockBorderWrapper"] {border-radius:16px;}
     .st-key-disclosure_analysis, .st-key-disclosure_chat, [class*="st-key-company_card_"] {
@@ -43,11 +43,22 @@ def apply_theme():
     .original-document table {width:100%;table-layout:fixed;border-collapse:collapse;margin:1rem 0;}
     .original-document td,.original-document th {border:1px solid #dce4ee;padding:.5rem;white-space:pre-wrap;overflow-wrap:anywhere;}
     .original-document p,.document-text {white-space:pre-wrap;overflow-wrap:anywhere;}
+    [data-testid="stMain"] {scroll-padding-top:5rem;}
+    .st-key-company_grid [data-testid="stHorizontalBlock"] {flex-wrap:wrap;gap:.75rem;align-items:stretch;}
+    .st-key-company_grid [data-testid="stColumn"] {flex:1 1 calc(33.333% - .75rem);min-width:0;}
+    .st-key-company_grid [class*="st-key-company_card_"] {min-height:0;padding:.75rem;margin:0;gap:.35rem !important;}
+    .st-key-company_grid h3 {font-size:1.15rem;}
+    .st-key-company_grid button p {font-size:.86rem;line-height:1.4;overflow-wrap:anywhere;}
+    .st-key-company_grid [data-testid="stCaptionContainer"] p {font-size:.76rem;margin-bottom:.35rem;}
+    @media(min-width:701px) and (max-width:1100px) {
+        .st-key-company_grid [data-testid="stColumn"] {flex:0 0 calc(50% - .75rem) !important;width:calc(50% - .75rem) !important;}
+    }
     @media(max-width:700px) {
-        .block-container {padding:1rem .8rem 2rem;}
+        .block-container {padding:4.5rem .8rem 2rem;}
         .research-hero {padding:1.4rem;min-height:180px;}
         [data-testid="stHorizontalBlock"]:has([class*="st-key-company_card_"]) {flex-wrap:wrap;}
         [data-testid="stColumn"]:has([class*="st-key-company_card_"]) {min-width:100%;}
+        .st-key-company_grid [data-testid="stColumn"] {flex:0 0 100% !important;width:100% !important;}
         .st-key-disclosure_analysis,.st-key-disclosure_chat {padding:.8rem;}
     }
     </style>''', unsafe_allow_html=True)
@@ -95,10 +106,25 @@ def render_company_overview(disclosures, companies, search, navigate, recent=Non
 
 
 def render_disclosure_header(selected,*,show_source=True,show_identifiers=True):
-    st.caption(f'{selected.corp_name} · {selected.rcept_dt} · {selected.disclosure_type}')
-    st.subheader(selected.report_nm)
-    if show_source:
-        st.link_button('공식 DART 원문 보기 ↗', selected.source_url)
-    if show_identifiers:
-        with st.expander('공시 식별 정보'):
-            st.text(f'접수번호: {selected.rcept_no}')
+    with st.container(key='disclosure_heading'):
+        st.caption(f'{selected.corp_name} · {selected.rcept_dt} · {selected.disclosure_type}')
+        st.subheader(selected.report_nm)
+        if show_source:
+            st.link_button('공식 DART 원문 보기 ↗', selected.source_url)
+        if show_identifiers:
+            with st.expander('공시 식별 정보'):
+                st.text(f'접수번호: {selected.rcept_no}')
+
+
+def reset_detail_scroll(receipt):
+    """Reset once on detail entry, not while reading/chatting during reruns."""
+    reset = st.session_state.get('_detail_scroll_receipt') != receipt
+    st.session_state['_detail_scroll_receipt'] = receipt
+    script = '''<script>
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        const main = document.querySelector('[data-testid="stMain"]');
+        if (main) main.scrollTo({top: 0, left: 0, behavior: 'auto'});
+    }));
+    </script>'''
+    # Keep the element position stable so unrelated expanders keep their state.
+    st.html(script if reset else '<span hidden></span>', unsafe_allow_javascript=True)

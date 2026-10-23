@@ -61,8 +61,8 @@ def open_recent(disclosure,origin='recent'):
         'scope': '전체 기간 검색',
         'filters': {key:st.session_state[key] for key in RETURN_FILTERS if key in st.session_state}}
     st.session_state['recent_detail'] = disclosure
-    if disclosure.rcept_no in by_id and by_id[disclosure.rcept_no].corp_code == disclosure.corp_code:
-        st.session_state['chosen_receipt'] = disclosure.rcept_no
+    st.session_state.setdefault('session_disclosures', {})[disclosure.rcept_no] = disclosure
+    st.session_state['chosen_receipt'] = disclosure.rcept_no
     st.session_state['detail_origin'] = origin
     navigate('공시 상세')
 
@@ -84,6 +84,8 @@ analyses = st.session_state.setdefault('analyses', {})
 separate_legacy_analysis(histories, analyses, ANALYSIS_QUESTION)
 page = st.session_state.setdefault('ui_page', '홈')
 st.session_state.setdefault('ui_section', '홈')
+if page not in ('공시 상세', '공시 분석'):
+    st.session_state.pop('_detail_scroll_receipt', None)
 st.session_state.setdefault('explore_scope','전체 기간 검색')
 with st.sidebar:
     st.markdown('## DART Insight')
@@ -138,13 +140,15 @@ try:
     metadata, embeddings = cached_store(settings)
     disclosures = list_disclosures(metadata)
 except MetadataIndexError:
-    st.info('AI 메타데이터 색인이 준비되어 있지 않습니다. 관리자에게 색인 준비를 요청해 주세요. 공식 API 공시 검색은 계속 이용할 수 있습니다.')
+    st.info('저장된 AI 메타데이터 색인이 없습니다. 공시를 선택하면 필요한 자료를 자동 준비합니다. 공식 API 공시 검색은 계속 이용할 수 있습니다.')
 except Exception:
     # Technical DB errors and configuration belong to diagnostics, not the home screen.
     st.info('보관된 공시를 불러올 수 없습니다. 잠시 후 다시 이용해 주세요.')
 st.session_state['record_labels'] = [
     {'receipt': d.rcept_no, 'label': f'{d.corp_name} · {d.report_nm}'} for d in disclosures]
-by_id = {d.rcept_no: d for d in disclosures}
+by_id = dict(st.session_state.get('session_disclosures', {}))
+by_id.update({d.rcept_no: d for d in disclosures})
+st.session_state['record_labels'] = [{'receipt': d.rcept_no, 'label': f'{d.corp_name} · {d.report_nm}'} for d in by_id.values()]
 availability_cache = {}
 
 
@@ -208,6 +212,9 @@ def run_question(question, *, history=None, target):
                 last_stage = next((phase for word, phase in (('XML', 'parse'), ('검색', 'retrieve'), ('원문', 'collect'), ('색인', 'index'), ('생성', 'generate')) if word in message), 'processing')
                 operations.info('ui_phase=%s', last_stage)
                 labels = {
+                    '기존 본문 색인 확인 중': '저장된 공시 본문을 확인하고 있습니다.',
+                    '기존 본문 색인 재사용 중': '준비된 원문을 재사용하고 있습니다.',
+                    '선택 공시 메타데이터 색인 중': '선택 공시를 분석 목록에 준비하고 있습니다.',
                     '외부 문서 검색어 생성 중': '질문에 맞는 검색 조건을 준비하고 있습니다.',
                     '외부 출처 및 메타데이터에서 문서 후보 검색 중': '관련 공시를 찾고 있습니다.',
                     'LLM으로 관련 후보 문서 선별 중': '질문과 관련된 문서를 확인하고 있습니다.',
@@ -237,7 +244,21 @@ def run_question(question, *, history=None, target):
     except (ConfigurationError, DartError, LLMError, QueryExtractionError, MetadataIndexError) as exc:
         operations.warning('ui_request_failed phase=%s exception=%s category=%s', last_stage, type(exc).__name__,
                            getattr(exc, 'category', 'processing'))
-        st.error('분석을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요. 이전 결과와 대화는 유지됩니다.')
+        category = getattr(exc, 'category', None)
+        code = getattr(exc, 'code', '')
+        if isinstance(exc, ConfigurationError) or category == 'authentication' or code in ('010', '011', '012'):
+            hint = '서비스 인증 설정을 확인해 주세요.'
+        elif code == '014' or isinstance(code, str) and code.startswith('document'):
+            hint = '원문을 정상적으로 읽지 못해 불완전한 본문으로 분석하지 않았습니다.'
+        elif category == 'rate_limit' or code == '020':
+            hint = '호출 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.'
+        elif category in ('schema', 'citation', 'grounding', 'truncated', 'empty_content', 'json_syntax'):
+            hint = 'AI 응답의 형식 또는 근거 검증에 실패해 답변을 표시하지 않았습니다.'
+        elif isinstance(exc, MetadataIndexError):
+            hint = '색인 또는 모델 설정을 확인해 주세요. 기존 자료는 보존됩니다.'
+        else:
+            hint = '외부 서비스 연결과 호출 한도를 확인한 뒤 다시 시도해 주세요.'
+        st.error('분석을 완료하지 못했습니다. ' + hint + ' 이전 결과와 대화는 유지됩니다.')
     except Exception as exc:
         # No raw exception, prompt, URL, or credential is copied into public output/logs.
         operations.error('ui_request_failed phase=%s exception=%s', last_stage, type(exc).__name__)
@@ -248,12 +269,15 @@ def run_question(question, *, history=None, target):
 
 
 def availability(disclosure):
-    known = by_id.get(disclosure.rcept_no)
-    if known is None or known.corp_code != disclosure.corp_code:
-        return False, '미색인 공시 · 원문 확인 가능 · AI 분석 미지원'
-    key = (known.rcept_no, known.corp_code)
+    if not settings.openai_api_key:
+        return False, 'AI 서비스 인증 설정이 없어 분석을 시작할 수 없습니다.'
+    if not settings.dart_api_key and not settings.document_bundle:
+        return False, '공시 원문 연결 설정이 없어 분석을 시작할 수 없습니다.'
+    key = (disclosure.rcept_no, disclosure.corp_code)
     if key not in availability_cache:
-        availability_cache[key] = analysis_readiness(settings, known)
+        known = by_id.get(disclosure.rcept_no)
+        ready, reason = analysis_readiness(settings, disclosure) if known and known.corp_code == disclosure.corp_code else (False, '')
+        availability_cache[key] = (True, 'AI 분석 가능 · 본문 재사용' if ready else '미색인 공시 · 원문 자동 준비 후 AI 분석')
     return availability_cache[key]
 
 
@@ -288,14 +312,14 @@ def render_analysis_view(disclosure):
         receipt = disclosure.rcept_no
         for turn in history_for(histories, receipt):
             render_turn(turn, company=disclosure.corp_name)
-        # Explicit questions retain F2003-F2005 first-time collection even when
-        # automatic analysis is blocked for a metadata-only item.
+        # Auto analysis must complete before follow-up generation can begin.
         if not settings.openai_api_key or not (settings.dart_api_key or settings.document_bundle):
             st.info('질문을 보내려면 AI 및 공시 원문 연결 설정이 필요합니다.')
             return
-        question = st.chat_input('선택 공시에 대해 추가 질문하세요', key='followup_question')
+        question = st.chat_input('선택 공시에 대해 추가 질문하세요', key='followup_question', disabled=receipt not in analyses)
         if question:
-            result = run_question(question, target=disclosure, history=[dict(turn) for turn in history_for(histories, receipt)])
+            from dart_insight.ui.analysis import followup_history
+            result = run_question(question, target=disclosure, history=followup_history(receipt, analyses, histories))
             if result is not None:
                 save_turn(histories, receipt, question, result)
                 st.rerun()
@@ -308,25 +332,29 @@ if page == '홈':
     from dart_insight.ui.dashboard import render_carousel
     render_carousel(COMPANIES, search, recent, open_recent, navigate, availability)
     st.subheader('오늘의 AI 브리핑')
-    st.caption('최근 7일 공시 중 본문 색인이 확인된 대표 1건만 세션당 자동 분석합니다. 기업 카드 이동으로 분석 대상을 바꾸거나 추가 호출하지 않습니다.')
+    st.caption('최근 7일 공시 중 최신 대표 1건만 세션당 원문 준비와 분석을 자동 실행합니다. 기업 카드 이동으로 분석 대상을 바꾸거나 추가 호출하지 않습니다.')
     if 'briefing_receipt' not in st.session_state:
         candidates = sorted((d for result in recent.values() for d in result.disclosures), key=lambda d:(d.rcept_dt,d.rcept_no), reverse=True)
         representative = next((d for d in candidates if availability(d)[0]), None)
         if representative:
             st.session_state['briefing_receipt'] = representative.rcept_no
+            st.session_state.setdefault('session_disclosures', {})[representative.rcept_no] = representative
+            by_id[representative.rcept_no] = representative
     representative = by_id.get(st.session_state.get('briefing_receipt'))
     if representative:
-        st.caption(f'{representative.corp_name} · {representative.report_nm} · {representative.rcept_dt}')
+        st.caption(f'{representative.corp_name} · {representative.report_nm} · 공시 접수일 {representative.rcept_dt}')
         render_automatic(representative)
+        if st.session_state.get('analysis_attempts', {}).get(representative.rcept_no) == 'failed':
+            st.info('대표 공시의 준비 또는 분석에 실패했습니다. 다른 공시를 자동으로 추가 분석하지 않습니다. 위 재시도 버튼이나 기업 카드의 다른 공시를 이용해 주세요.')
     else:
-        st.info('최근 7일 공시 중 AI 분석 가능한 본문 색인이 없습니다. 공시 탐색에서 기존 공시와 원문을 확인하세요.')
+        st.info('최근 공시가 없거나 서비스 연결 설정이 없어 자동 브리핑을 실행하지 않았습니다. 공시 탐색에서 기존 공시와 원문을 확인하세요.')
     st.caption(DISCLAIMER)
     st.stop()
 
 if page == '분석 기록':
     st.title('분석 기록')
     st.caption('현재 세션의 기록입니다. 브라우저 새로고침이나 세션 종료 후에는 복원되지 않을 수 있습니다.')
-    recorded = [d for d in disclosures if histories.get(d.rcept_no) or d.rcept_no in analyses]
+    recorded = [d for d in by_id.values() if histories.get(d.rcept_no) or d.rcept_no in analyses]
     if not recorded:
         st.info('아직 분석 기록이 없습니다.')
     for disclosure in recorded:
@@ -372,15 +400,16 @@ if page == '공시 상세':
         st.info('이 주소의 공시 정보를 현재 조회 범위에서 복원하지 못했습니다. 공시 탐색에서 다시 선택해 주세요.')
         st.button('공시 탐색으로 이동',on_click=back_to_recent)
         st.stop()
+    from dart_insight.ui.layout import reset_detail_scroll
+    reset_detail_scroll(recent_selected.rcept_no)
     render_disclosure_header(recent_selected,show_source=False,show_identifiers=False)
     st.caption(DISCLAIMER)
-    from dart_insight.ui.document_view import render_document
-    render_document(settings,recent_selected)
-    indexed = by_id.get(recent_selected.rcept_no)
-    if indexed is not None and indexed.corp_code == recent_selected.corp_code:
-        render_analysis_view(indexed)
-    else:
-        st.info('아직 분석 준비가 되지 않은 공시입니다. 공식 DART 원문에서 내용을 확인해 주세요.')
+    st.session_state.setdefault('session_disclosures', {})[recent_selected.rcept_no] = recent_selected
+    by_id.setdefault(recent_selected.rcept_no, recent_selected)
+    render_analysis_view(recent_selected)
+    with st.expander('공시 원문 전체 및 표 확인', key='original_view_' + recent_selected.rcept_no):
+        from dart_insight.ui.document_view import render_document
+        render_document(settings, recent_selected)
     st.link_button('공식 DART 원문 보기 ↗',recent_selected.source_url)
     with st.container(key='detail_return'):
         st.button('← 공시 목록으로 돌아가기', key='back_to_recent', on_click=back_to_recent)
@@ -392,6 +421,8 @@ if receipt not in by_id:
     st.stop()
 selected = by_id[receipt]
 st.button('← 공시 목록', key='back_to_explore', on_click=navigate, args=('공시 탐색',))
+from dart_insight.ui.layout import reset_detail_scroll
+reset_detail_scroll(selected.rcept_no)
 render_disclosure_header(selected)
 st.caption(DISCLAIMER)
 
