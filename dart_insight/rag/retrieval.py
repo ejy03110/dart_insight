@@ -18,7 +18,7 @@ class Evidence:
         return asdict(self)
 
 
-def retrieve(metadata, documents, selected, question, embeddings, settings):
+def retrieve(metadata, documents, selected, question, embeddings, settings, *, original_only=False):
     for collection in (metadata, documents):
         check_collection_model(collection, settings.embedding_model)
     check_embedding_model(embeddings, settings.embedding_model)
@@ -31,6 +31,8 @@ def retrieve(metadata, documents, selected, question, embeddings, settings):
     evidence = [Evidence(pinned['ids'][0], pinned['documents'][0], m['report_nm'],
                          m['source_url'], 'opendart_metadata')]
     scope = {'item_rcept_no': selected.rcept_no}
+    if original_only:
+        scope = {'$and': [scope, {'document_rcept_no': selected.rcept_no}, {'corp_code': selected.corp_code}]}
     if settings.top_k == 1 or not documents.get(where=scope, limit=1, include=[])['ids']:
         return evidence
     vector = embeddings.embed_query(question)

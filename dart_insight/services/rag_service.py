@@ -13,6 +13,8 @@ from dart_insight.rag.retrieval import retrieve
 from dart_insight.services.candidate_search import search_candidates
 from dart_insight.services.original_documents import selected_candidate
 from dart_insight.vectorstore.documents import index_documents
+from dart_insight.vectorstore.metadata import MetadataIndexError
+from dart_insight.services.analysis_preparation import original_index_state
 
 
 class RagService:
@@ -20,7 +22,7 @@ class RagService:
         self.settings, self.metadata, self.documents = settings, metadata, documents
         self.embeddings, self.ledger, self.source, self.llm = embeddings, ledger, source, llm
 
-    def prepare(self, selected, question, progress=lambda _: None, *, history=None):
+    def prepare(self, selected, question, progress=lambda _: None, *, history=None, selected_original_only=False):
         recent = recent_history(history, selected.rcept_no)
         scope = context_id(recent) if recent else None
         cache_question = question + (f" [대화문맥:{scope}]" if scope else "")
@@ -73,17 +75,21 @@ class RagService:
                         # Bound prompt size; selected item always wins truncation as well as LLM exclusion.
                         candidates = [found[selected.rcept_no]] + [c for key, c in found.items()
                                                                   if key != selected.rcept_no][:self.settings.candidate_top_k * 2]
+                    # Retain the full search snapshot for later explicit questions.
+                    # Only the current overview's LLM input has a one-original budget.
+                    selection_candidates = [selected_candidate(selected)] if selected_original_only else candidates
                     progress('LLM으로 관련 후보 문서 선별 중')
                     chosen = self.llm.json(SELECTION_PROMPT,
                         {'question': question, 'history': [t for t in recent if t['role'] == 'user'],
                          'selected': selected.to_dict(),
-                         'candidates': [c.to_dict() for c in candidates]},
-                        lambda value: selected_ids(value, {c.document_rcept_no for c in candidates}))
+                         'candidates': [c.to_dict() for c in selection_candidates]},
+                        lambda value: selected_ids(value, {c.document_rcept_no for c in selection_candidates}))
                     chosen = list(dict.fromkeys([selected.rcept_no, *chosen]))
                     plan = {'query': query, 'question': normalized_question, 'candidates': [c.to_dict() for c in candidates], 'selected_ids': chosen,
-                            'rejected_ids': [c.document_rcept_no for c in candidates if c.document_rcept_no not in chosen]}
+                            'rejected_ids': [c.document_rcept_no for c in selection_candidates if c.document_rcept_no not in chosen],
+                            'budget_excluded_ids': [c.document_rcept_no for c in candidates if c not in selection_candidates]}
                     self.ledger.plan(selected.rcept_no, record_query, plan)
-                chosen = set(plan['selected_ids']) | {selected.rcept_no}
+                chosen = {selected.rcept_no} if selected_original_only else set(plan['selected_ids']) | {selected.rcept_no}
                 docs = []
                 for candidate_data in plan['candidates']:
                     candidate = DocumentCandidate(**candidate_data)
@@ -119,7 +125,16 @@ class RagService:
             pending_docs = [d for d in row.documents if d.document_rcept_no not in verified_documents]
             if pending_docs:
                 with measure('index_and_verify', documents=len(pending_docs)):
-                    index_documents(pending_docs, self.documents, self.embeddings, self.settings)
+                    to_index = []
+                    for doc in pending_docs:
+                        try:
+                            complete = doc.document_rcept_no == selected.rcept_no and original_index_state(self.documents, self.ledger, selected, self.settings) == 'complete'
+                        except MetadataIndexError:
+                            complete = False  # Explicit question/rechunk workflow retains prior behavior.
+                        if not complete:
+                            to_index.append(doc)
+                    if to_index:
+                        index_documents(to_index, self.documents, self.embeddings, self.settings)
                 verified_documents.update(d.document_rcept_no for d in pending_docs)
             self.ledger.mark_indexed(selected.rcept_no, record_query)
             audits.append(plan or {'query': query, 'selected_ids': [d.document_rcept_no for d in row.documents],
@@ -133,10 +148,23 @@ class RagService:
         if recalled is not None:
             progress('이전 대화 확인 완료')
             return recalled
-        audit = self.prepare(selected, question, progress, history=recent)
+        from dart_insight.rag.prompts.answer import ANALYSIS_QUESTION
+        reuse_original = False
+        if question == ANALYSIS_QUESTION:
+            progress('기존 본문 색인 확인 중')
+            reuse_original = original_index_state(self.documents, self.ledger, selected, self.settings) == 'complete'
+        if reuse_original:
+            progress('기존 본문 색인 재사용 중')
+            audit = {'queries': [], 'selection': [], 'parse_notes': [], 'reused_original_index': True}
+        else:
+            audit = self.prepare(selected, question, progress, history=recent, selected_original_only=question == ANALYSIS_QUESTION)
+            if question == ANALYSIS_QUESTION and original_index_state(self.documents, self.ledger, selected, self.settings) != 'complete':
+                raise MetadataIndexError('선택 공시 본문 색인이 완료되지 않아 분석을 중단했습니다.')
+        if question == ANALYSIS_QUESTION:
+            audit['automatic_original_limit'] = 1
         audit.update(history_messages=len(recent), response_style=response_style(question), answer_basis='disclosure')
         graph = build_graph(lambda q: retrieve(self.metadata, self.documents, selected, contextual_search(q, recent),
-                                               self.embeddings, self.settings), self.llm, progress, history=recent, receipt=selected.rcept_no)
+                                               self.embeddings, self.settings, original_only=question == ANALYSIS_QUESTION), self.llm, progress, history=recent, receipt=selected.rcept_no)
         result = graph.invoke({'question': question, 'history': recent, 'response_style': response_style(question)})
         progress('완료')
         return {**result, 'audit': audit}
