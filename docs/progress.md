@@ -1,5 +1,12 @@
 # DART Insight 진행 현황
 
+## Windows 실검증 종료/정리 오류 보완 (2026-10-23)
+
+- Codex Linux 전체 회귀: **297 실행 / 296 통과 / 실패0 / 오류0 / Windows 전용 skip1**, 64.762초. 기존292개 모두 통과. 신규5개 중4개 통과/Windows1개 미실행.
+- 별도 `fix/windows-live-validation-cleanup`에서 검증 스크립트만 자식 프로세스로 격리하고 정상 종료·임시 폴더 정리 후 최종 passed 기록. 정리 오류는 숨기지 않고 실패 단계 기록.
+- 사용자 Windows 두 실검증 PASS/최종 PermissionError 보고와 Codex 회귀 결과를 구분. 운영 RAG/DB/설정/의존성 변경 없음, master 병합 없음.
+- Windows 전용 잠금 회귀 추가. 정확한 원인 확정의 한계·재실행 방법: [상세 보고서](ux-quality-final.md).
+
 ## UX-05 클릭 기반 수집·색인·RAG 완전 자동 연결 (2026-10-23 KST)
 
 - 기준 `feat/ui-ux-improvement` `2ccccbb`, 원격/로컬 일치·시작 변경 없음 확인. master 병합 없음.

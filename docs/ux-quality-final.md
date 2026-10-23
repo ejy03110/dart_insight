@@ -1,3 +1,13 @@
+## Windows 실검증 종료/정리 오류 보완 (2026-10-23)
+
+- Codex Linux 전체 회귀: **297 실행 / 296 통과 / 실패0 / 오류0 / Windows 전용 skip1**, 64.762초. 기존292개 모두 통과. 신규5개 중4개 통과/Windows1개 미실행.
+- 사용자 Windows 실측: 미색인(원문 청크2/인용2/수집1/색인1), 기존 색인(재수집·재색인 없음) 두 항목 PASS 후 최종 PermissionError. 이는 사용자 제공 증거이며 이 환경의 실제 API 재실행 결과와 구분한다.
+- 기존 `7a7e423` 스크립트 82행의 두 번째 PASS 기록 이후, 83행의 최종 passed 사이에는 Runtime context 종료(70행)와 TemporaryDirectory context 정리(67행)가 있다. Runtime은 HTTP 클라이언트만 닫고 Chroma persistent 시스템/네이티브 핸들은 살아 있어 Windows 파일 삭제 잠금이 유력하다. 기존 보고서는 traceback/단계를 기록하지 않아 **실제 Windows에서 거부된 파일과 정확한 최하위 호출은 확정할 수 없다**.
+- `scripts/verify_ux05_live.py`: 자식 프로세스만 격리 DB/모델/Runtime을 소유. 부모는 자식 정상 종료를 기다린 뒤 임시 디렉터리를 삭제한다. Chroma private reset/운영 DB 변경/예외 무시는 사용하지 않는다. `/workspace` 고정을 제거해 OS 임시 경로를 사용한다.
+- 자식 상태 `verified`는 잠정 결과다. 두 검증 PASS·자식 exit0·임시 폴더 정리가 모두 성공한 뒤에만 부모가 최종 `passed`/exit0을 기록한다. 정리 실패 시 두 PASS를 유지하되 `failed`/exit1, `error_stage=temporary_directory_cleanup`을 기록한다. Runtime 종료 실패는 `runtime_close`, 단계별 오류는 안전한 타입과 파일명/함수/행만 기록한다. API 키·provider 원문·전체 traceback·자식 stdout/stderr를 출력하지 않는다.
+- 신규 회귀: 실제 Chroma 및 열린 SQLite 핸들을 남긴 자식 종료 후 삭제, 정리 PermissionError의 최종 실패 보존, 비정상 자식 종료 차단, 불완전 검증 차단, Windows 실제 열린 파일 삭제 잠금 재현 테스트. Windows 전용 테스트는 Linux에서 명시 skip.
+- Windows 실행: `python -m unittest discover -s tests -p test_verify_ux05_live.py -v` 후 기존 `python scripts/verify_ux05_live.py --output <보고서경로>` 재실행. 이 환경에서는 Windows 및 실제 OpenDART/BGE-M3/GMS 재검증 미실행. 운영 RAG/SQLite/Chroma/.env/의존성 변경 없음. F2001~F2012 동작 변경 없음, F2012/NF2003/NF2004의 실패/민감정보 구분 유지.
+
 # UX-05 클릭 기반 완전 자동 준비·분석 수정 (2026-10-23 KST)
 
 **이 절이 최신 동작이다. 아래 `2ccccbb` 작업 기록의 “미색인 공시 자동 분석 차단”,
